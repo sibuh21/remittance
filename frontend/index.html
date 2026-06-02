@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Remit | Send Money to Ethiopia</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-text">GlobalRemit</span>
+                </div>
+                <div class="header-status" id="connection-status">
+                    <small>BoA Protected</small>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <div class="remittance-card">
+                <h1 class="card-title">Send Money</h1>
+                <p class="card-subtitle">Fast, secure international transfers to Ethiopia.</p>
+
+                <form id="remit-form">
+                    <!-- Step 1: Destination & Amount -->
+                    <div class="form-section">
+                        <span class="section-label">1. Transfer Details</span>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label class="form-label">Send Amount</label>
+                                <input type="number" id="send_amount" name="send_amount" class="form-input" placeholder="0.00" step="0.01" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Currency</label>
+                                <select id="send_currency" name="send_currency" class="form-select">
+                                    <option value="USD">USD - US Dollar</option>
+                                    <option value="EUR">EUR - Euro</option>
+                                    <option value="GBP">GBP - British Pound</option>
+                                    <option value="CAD">CAD - Canadian Dollar</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="rate-display">
+                            <div class="rate-info">
+                                <span class="rate-label">Exchange Rate</span>
+                                <span class="rate-value" id="current-rate">Fetching rate...</span>
+                            </div>
+                            <div class="receive-amount">
+                                <span class="receive-label">Recipient gets (approx)</span>
+                                <span class="receive-value" id="approx-receive">0.00 ETB</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Beneficiary Details -->
+                    <div class="form-section">
+                        <span class="section-label">2. Recipient Information</span>
+                        <div class="form-grid">
+                            <div class="form-group full-width">
+                                <label class="form-label">Recipient Full Name</label>
+                                <input type="text" id="receiver_name" name="receiver_name" class="form-input" placeholder="As it appears on ID" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Payout Type</label>
+                                <select id="payout_type" name="payout_type" class="form-select">
+                                    <option value="WITHIN_BOA">Bank of Abyssinia Account</option>
+                                    <option value="OTHER_BANK">Other Ethiopian Bank</option>
+                                    <option value="TELEBIRR">Telebirr Wallet</option>
+                                    <option value="MPESA">M-Pesa Wallet</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="bank-select-group" style="display:none;">
+                                <label class="form-label">Select Bank</label>
+                                <select id="bank_id" name="bank_id" class="form-select">
+                                    <option value="">Choose a bank...</option>
+                                    <!-- Populated dynamically -->
+                                </select>
+                            </div>
+                            <div class="form-group" id="account-group">
+                                <label class="form-label" id="account-label">Account Number</label>
+                                <input type="text" id="account_number" name="account_number" class="form-input" placeholder="Account or Phone">
+                            </div>
+                            <div class="form-group" id="phone-group" style="display:none;">
+                                <label class="form-label">Receiver Phone</label>
+                                <input type="text" id="receiver_phone" name="receiver_phone" class="form-input" placeholder="251...">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Sender Details -->
+                    <div class="form-section">
+                        <span class="section-label">3. Your Information</span>
+                        <div class="form-grid">
+                            <div class="form-group full-width">
+                                <label class="form-label">Your Name</label>
+                                <input type="text" id="sender_name" name="sender_name" class="form-input" placeholder="Full legal name" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Email Address</label>
+                                <input type="email" id="sender_email" name="sender_email" class="form-input" placeholder="email@example.com">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Country</label>
+                                <input type="text" id="sender_country" name="sender_country" class="form-input" placeholder="USA, UK, etc.">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="submit-btn" id="submit-btn">Continue to Payment</button>
+                </form>
+            </div>
+        </main>
+
+        <form id="cybersource-form" method="POST" style="display:none;"></form>
+
+        <footer class="footer" style="text-align:center; padding: 2rem; color: var(--color-text-dim); font-size: 0.8rem;">
+            &copy; 2026 GlobalRemit. Powered by CyberSource & Bank of Abyssinia.
+        </footer>
+    </div>
+
+    <script src="checkout.js"></script>
+</body>
+</html>

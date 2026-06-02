@@ -1,0 +1,111 @@
+package handler
+
+import (
+	"net/http"
+
+	"remittance-service/internal/domain"
+
+	"github.com/labstack/echo/v4"
+)
+
+type remittanceHandler struct {
+	svc domain.RemittanceService
+}
+
+// NewRemittanceHandler creates a new RemittanceHandler.
+func NewRemittanceHandler(svc domain.RemittanceService) domain.RemittanceHandler {
+	return &remittanceHandler{svc: svc}
+}
+
+// InitiateRemittance handles POST /api/remittance
+// Validates beneficiary, fetches exchange rate, and returns CyberSource checkout fields.
+func (h *remittanceHandler) InitiateRemittance(c echo.Context) error {
+	var req domain.RemittanceRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"message": "invalid request body",
+			"detail":  err.Error(),
+		})
+	}
+
+	resp, err := h.svc.InitiateRemittance(&req)
+	if err != nil {
+		if appErr, ok := err.(*domain.AppError); ok {
+			return c.JSON(appErr.Code, appErr)
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"message": "failed to initiate remittance",
+			"detail":  err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, resp)
+}
+
+// TriggerPayout handles POST /api/remittance/payout
+func (h *remittanceHandler) TriggerPayout(c echo.Context) error {
+	var req domain.ManualPayoutRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"message": "invalid request body",
+			"detail":  err.Error(),
+		})
+	}
+
+	result, err := h.svc.TriggerManualPayout(&req)
+	if err != nil {
+		if appErr, ok := err.(*domain.AppError); ok {
+			return c.JSON(appErr.Code, appErr)
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"message": "failed to trigger payout",
+			"detail":  err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+func (h *remittanceHandler) GetStatus(c echo.Context) error {
+	id := c.Param("id")
+	if id == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"message": "id is required"})
+	}
+
+	txn, err := h.svc.GetTransactionStatus(id)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"message": "transaction not found"})
+	}
+
+	return h.formatTransactionResponse(c, txn)
+}
+
+// ListSenderRemittances handles GET /api/remittance/sender/:email
+func (h *remittanceHandler) ListSenderRemittances(c echo.Context) error {
+	email := c.Param("email")
+	status := domain.RemittanceStatus(c.QueryParam("status"))
+	
+	txns, err := h.svc.GetSenderRemittances(email, status)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"message": "failed to list remittances", "detail": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, txns)
+}
+
+// ListReceiverRemittances handles GET /api/remittance/receiver/:phone
+func (h *remittanceHandler) ListReceiverRemittances(c echo.Context) error {
+	phone := c.Param("phone")
+	status := domain.RemittanceStatus(c.QueryParam("status"))
+	
+	txns, err := h.svc.GetReceiverRemittances(phone, status)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"message": "failed to list remittances", "detail": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, txns)
+}
+
+func (h *remittanceHandler) formatTransactionResponse(c echo.Context, t *domain.Transaction) error {
+	return c.JSON(http.StatusOK, t)
+}

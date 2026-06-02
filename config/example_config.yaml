@@ -1,0 +1,60 @@
+# Remittance Service Configuration
+# Copy this file to config.yaml and fill in your credentials.
+# NEVER commit config.yaml with real credentials to version control.
+
+server:
+  port: "8090"
+  read_timeout: "15s"
+  write_timeout: "15s"
+  idle_timeout: "60s"
+  request_timeout: "30s"
+
+# ─── CyberSource (Inbound Collection) ───────────────────────────────────────
+# Processes international credit/debit card payments via Secure Acceptance
+# Hosted Checkout. Uses Account Funding Transaction (AFT) when available.
+cybersource:
+  # Get these from CyberSource Business Center → Payment Configuration → Secure Acceptance Settings
+  # 1. Create a new Secure Acceptance profile with "Hosted Checkout" integration method
+  # 2. Under Security tab → Create Key to get access_key and secret_key
+  # 3. Profile ID is shown at the top left of the profile edit page
+  access_key: "your_access_key"
+  profile_id: "your_profile_id"
+  secret_key: "your_secret_key"
+  # Sandbox: https://testsecureacceptance.cybersource.com/pay
+  # Production: https://secureacceptance.cybersource.com/pay
+  checkout_url: "https://testsecureacceptance.cybersource.com/pay"
+
+# ─── Database (PostgreSQL) ──────────────────────────────────────────────────
+# Used to record all inbound and outbound transactions.
+database:
+  host: "localhost"
+  port: 5432
+  user: "postgres"
+  password: "postgres"
+  dbname: "remittance"
+  sslmode: "disable"
+
+# ─── Bank of Abyssinia (Outbound Payout) ────────────────────────────────────
+# Receives settled funds and disburses to Ethiopian recipients via:
+# - Within-BoA account transfer
+# - Other bank transfer via EthSwitch
+# - Mobile wallet (Telebirr, Mpesa)
+boa:
+  # Base URL for BoA remittance APIs
+  # Beta: https://boapibeta.bankofabyssinia.com/remittance/InverseRemit
+  base_url: "https://boapibeta.bankofabyssinia.com/remittance/InverseRemit"
+  # OAuth 2.0 token endpoint
+  token_url: "https://boapibeta.bankofabyssinia.com/remittance/InverseRemit/oauth2"
+  # Credentials provided by Bank of Abyssinia
+  client_id: "your_boa_client_id"
+  client_secret: "your_boa_client_secret"
+  # Initial refresh token provided by BoA (will be rotated on each token request)
+  refresh_token: "your_initial_refresh_token"
+  # Static API key provided by BoA (required in x-api-key header for all POST APIs)
+  api_key: "your_boa_api_key"
+
+cors:
+  allowed_origins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"
+    - "http://localhost:8090"

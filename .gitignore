@@ -1,0 +1,36 @@
+# Remittance Service - GITIGNORE
+# Build outputs
+/bin/
+/dist/
+
+# Configuration with secrets
+config/config.yaml
+
+# Environment files
+.env
+.env.*
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

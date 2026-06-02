@@ -1,0 +1,186 @@
+package database
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+
+	"remittance-service/internal/domain"
+
+	_ "github.com/lib/pq"
+)
+
+type DB struct {
+	Conn *sql.DB
+}
+
+func NewConnection(cfg domain.Config) (*DB, error) {
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host, cfg.Database.Port, cfg.Database.User, cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+
+	log.Println("Connected to PostgreSQL successfully")
+
+	return &DB{Conn: db}, nil
+}
+
+func (db *DB) InitializeSchema() error {
+	query := `
+	CREATE TABLE IF NOT EXISTS transactions (
+		id UUID PRIMARY KEY,
+		remittance_id VARCHAR(50) UNIQUE NOT NULL,
+		status VARCHAR(50) NOT NULL,
+		
+		sender_name VARCHAR(255) NOT NULL,
+		sender_email VARCHAR(255),
+		source_amount VARCHAR(50) NOT NULL,
+		source_currency VARCHAR(10) NOT NULL,
+		cybersource_ref VARCHAR(100),
+		collection_status VARCHAR(50),
+		
+		exchange_rate DECIMAL(18, 8) DEFAULT 0,
+		target_amount VARCHAR(50),
+		target_currency VARCHAR(10),
+		
+		receiver_name VARCHAR(255) NOT NULL,
+		receiver_phone VARCHAR(50),
+		payout_type VARCHAR(50) NOT NULL,
+		account_number VARCHAR(100),
+		bank_id VARCHAR(50),
+		boa_reference VARCHAR(100),
+		payout_status VARCHAR(50),
+		
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+	);
+	`
+	_, err := db.Conn.Exec(query)
+	return err
+}
+
+func (db *DB) CreateTransaction(t *domain.Transaction) error {
+	query := `
+	INSERT INTO transactions (
+		id, remittance_id, status, sender_name, sender_email, source_amount, 
+		source_currency, exchange_rate, target_amount, target_currency, 
+		receiver_name, receiver_phone, payout_type, account_number, bank_id
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+	`
+	_, err := db.Conn.Exec(query, 
+		t.ID, t.RemittanceID, t.Status, t.SenderName, t.SenderEmail, t.SourceAmount, 
+		t.SourceCurrency, t.ExchangeRate, t.TargetAmount, t.TargetCurrency, 
+		t.ReceiverName, t.ReceiverPhone, t.PayoutType, t.AccountNumber, t.BankID)
+	return err
+}
+
+func (db *DB) UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error {
+	query := `
+	UPDATE transactions 
+	SET cybersource_ref = $2, collection_status = $3, status = $4, updated_at = CURRENT_TIMESTAMP
+	WHERE remittance_id = $1
+	`
+	_, err := db.Conn.Exec(query, remittanceID, cybersourceRef, collectionStatus, status)
+	return err
+}
+
+func (db *DB) UpdatePayoutResult(remittanceID, boaRef, payoutStatus, status string) error {
+	query := `
+	UPDATE transactions 
+	SET boa_reference = $2, payout_status = $3, status = $4, updated_at = CURRENT_TIMESTAMP
+	WHERE remittance_id = $1
+	`
+	_, err := db.Conn.Exec(query, remittanceID, boaRef, payoutStatus, status)
+	return err
+}
+
+func (db *DB) GetTransactionByRef(ref string) (*domain.Transaction, error) {
+	query := `SELECT * FROM transactions WHERE remittance_id = $1 OR cybersource_ref = $1`
+	row := db.Conn.QueryRow(query, ref)
+
+	var t domain.Transaction
+	err := row.Scan(
+		&t.ID, &t.RemittanceID, &t.Status, &t.SenderName, &t.SenderEmail, 
+		&t.SourceAmount, &t.SourceCurrency, &t.CybersourceRef, &t.CollectionStatus, 
+		&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName, 
+		&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID, 
+		&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (db *DB) GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error) {
+	query := `SELECT * FROM transactions WHERE sender_email = $1`
+	args := []any{email}
+	if status != "" {
+		query += " AND status = $2"
+		args = append(args, status)
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := db.Conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txns []*domain.Transaction
+	for rows.Next() {
+		var t domain.Transaction
+		err := rows.Scan(
+			&t.ID, &t.RemittanceID, &t.Status, &t.SenderName, &t.SenderEmail, 
+			&t.SourceAmount, &t.SourceCurrency, &t.CybersourceRef, &t.CollectionStatus, 
+			&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName, 
+			&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID, 
+			&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		txns = append(txns, &t)
+	}
+	return txns, nil
+}
+
+func (db *DB) GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error) {
+	query := `SELECT * FROM transactions WHERE receiver_phone = $1`
+	args := []any{phone}
+	if status != "" {
+		query += " AND status = $2"
+		args = append(args, status)
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := db.Conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txns []*domain.Transaction
+	for rows.Next() {
+		var t domain.Transaction
+		err := rows.Scan(
+			&t.ID, &t.RemittanceID, &t.Status, &t.SenderName, &t.SenderEmail, 
+			&t.SourceAmount, &t.SourceCurrency, &t.CybersourceRef, &t.CollectionStatus, 
+			&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName, 
+			&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID, 
+			&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		txns = append(txns, &t)
+	}
+	return txns, nil
+}
