@@ -71,15 +71,22 @@ type CheckoutRequest struct {
 	PaymentMethod string `json:"payment_method"`
 
 	// Remittance enrichment
-	SenderName     string `json:"sender_name"`
-	SenderEmail    string `json:"sender_email"`
-	SenderCountry  string `json:"sender_country"`
-	ReceiverName   string `json:"receiver_name"`
-	ReceiverPhone  string `json:"receiver_phone"`
-	PayoutType     string `json:"payout_type"`      // WITHIN_BOA, OTHER_BANK, TELEBIRR, MPESA
-	AccountNumber  string `json:"account_number"`    // for bank transfers
-	BankID         string `json:"bank_id"`           // for other bank transfers
-	TargetCurrency string `json:"target_currency"`   // e.g. "ETB"
+	SenderName         string `json:"sender_name"`
+	SenderEmail        string `json:"sender_email"`
+	SenderAddress      string `json:"sender_address"`
+	SenderCity         string `json:"sender_city"`
+	SenderState        string `json:"sender_state"`
+	SenderPostal       string `json:"sender_postal"`
+	SenderCountry      string `json:"sender_country"`
+	ReceiverName       string `json:"receiver_name"`
+	ReceiverAddress    string `json:"receiver_address"`
+	ReceiverCity       string `json:"receiver_city"`
+	ReceiverCountry    string `json:"receiver_country"`
+	ReceiverPhone      string `json:"receiver_phone"`
+	PayoutType         string `json:"payout_type"`      // WITHIN_BOA, OTHER_BANK, TELEBIRR, MPESA
+	AccountNumber      string `json:"account_number"`    // for bank transfers
+	BankID             string `json:"bank_id"`           // for other bank transfers
+	TargetCurrency     string `json:"target_currency"`   // e.g. "ETB"
 }
 
 func (r CheckoutRequest) Validate() error {
@@ -90,7 +97,15 @@ func (r CheckoutRequest) Validate() error {
 			validation.In("USD", "EUR", "GBP", "CAD", "AUD").Error("unsupported source currency"),
 		),
 		validation.Field(&r.SenderName, validation.Required.Error("sender name is required")),
+		validation.Field(&r.SenderAddress, validation.Required.Error("sender address is required")),
+		validation.Field(&r.SenderCity, validation.Required.Error("sender city is required")),
+		validation.Field(&r.SenderState, validation.Required.Error("sender state/province is required")),
+		validation.Field(&r.SenderPostal, validation.Required.Error("sender postal code is required")),
+		validation.Field(&r.SenderCountry, validation.Required.Error("sender country is required")),
 		validation.Field(&r.ReceiverName, validation.Required.Error("receiver name is required")),
+		validation.Field(&r.ReceiverAddress, validation.Required.Error("receiver address is required")),
+		validation.Field(&r.ReceiverCity, validation.Required.Error("receiver city is required")),
+		validation.Field(&r.ReceiverCountry, validation.Required.Error("receiver country is required")),
 		validation.Field(&r.PayoutType,
 			validation.Required.Error("payout_type is required"),
 			validation.In("WITHIN_BOA", "OTHER_BANK", "TELEBIRR", "MPESA").Error("invalid payout type"),
@@ -114,6 +129,29 @@ type PaymentResult struct {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// CyberSource Constants
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const (
+	// CSStatus values returned by CyberSource REST API
+	CSStatusAuthorized              = "AUTHORIZED"
+	CSStatusAuthorizedPendingReview = "AUTHORIZED_PENDING_REVIEW"
+	CSStatusPendingAuth             = "PENDING_AUTHENTICATION"
+	CSStatusDeclined                = "DECLINED"
+	CSStatusRejected                = "REJECTED"
+
+	// Processing Action Lists
+	ActionConsumerAuth         = "CONSUMER_AUTHENTICATION"
+	ActionValidateConsumerAuth = "VALIDATE_CONSUMER_AUTHENTICATION"
+
+	// AFT (Account Funding Transaction) Constants
+	BusinessAppIDPersonToPerson = "PP" // Person-to-Person transfer
+	CommerceIndicatorInternet   = "internet"
+	DeviceChannelBrowser        = "Browser"
+	FundingInitiatorSender      = "S" // Sender-initiated
+)
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Flex Microform (REST API) Orchestration Models
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -125,21 +163,27 @@ type CaptureContextRequest struct {
 // PASetupRequest
 type PASetupRequest struct {
 	RemittanceID      string `json:"remittance_id"`
-	TransientTokenJti string `json:"transientTokenJti"`
+	TransientTokenJti string `json:"transient_token_jti"`
+	TransientTokenJWT string `json:"transient_token_jwt"`
+	ExpirationMonth   string `json:"expiration_month"`
+	ExpirationYear    string `json:"expiration_year"`
 }
 
 // PASetupResponse
 type PASetupResponse struct {
-	AccessToken             string `json:"accessToken"`
-	DeviceDataCollectionUrl string `json:"deviceDataCollectionUrl"`
-	ReferenceId             string `json:"referenceId"`
+	AccessToken             string `json:"access_token"`
+	DeviceDataCollectionUrl string `json:"device_data_collection_url"`
+	ReferenceId             string `json:"reference_id"`
 }
 
 // AuthorizeRequest (Step 5)
 type AuthorizeRequest struct {
 	RemittanceID      string          `json:"remittance_id"`
-	TransientTokenJWT string          `json:"transientTokenJwt"`
-	PAReferenceId     string          `json:"paReferenceId"`
+	TransientTokenJti string          `json:"transient_token_jti"`
+	TransientTokenJWT string          `json:"transient_token_jwt"`
+	PAReferenceId     string          `json:"pa_reference_id"`
+	ExpirationMonth   string          `json:"expiration_month"`
+	ExpirationYear    string          `json:"expiration_year"`
 	Sender            RemittanceParty `json:"sender"`
 	Recipient         RemittanceParty `json:"recipient"`
 	Amount            string          `json:"amount"`
@@ -149,7 +193,7 @@ type AuthorizeRequest struct {
 // ValidateRequest (Step 7)
 type ValidateRequest struct {
 	RemittanceID                string `json:"remittance_id"`
-	AuthenticationTransactionId string `json:"authenticationTransactionId"`
+	AuthenticationTransactionId string `json:"authentication_transaction_id"`
 }
 
 type ConsumerAuthResponse struct {
@@ -172,27 +216,27 @@ type ConsumerAuthResponse struct {
 
 // RemittanceParty helper for AuthorizeRequest
 type RemittanceParty struct {
-	FirstName     string `json:"first_name"`
-	LastName      string `json:"last_name"`
-	Email         string `json:"email,omitempty"`
-	Address       string `json:"address"`
-	City          string `json:"city"`
-	Country       string `json:"country"`      // e.g. "UK"
-	CountryISO3   string `json:"country_iso3"` // e.g. "GBR"
-	PostalCode    string `json:"postal_code"`
-	Phone         string `json:"phone,omitempty"`
-	IDNumber      string `json:"id_number,omitempty"`
-	AccountNumber string `json:"account_number,omitempty"`
+	FirstName          string `json:"first_name"`
+	LastName           string `json:"last_name"`
+	Email              string `json:"email,omitempty"`
+	Address            string `json:"address"`
+	City               string `json:"city"`
+	AdministrativeArea string `json:"administrative_area,omitempty"` // State/Province (e.g. "NY")
+	Country            string `json:"country"` // Full name or code, will be converted in backend
+	PostalCode         string `json:"postal_code"`
+	Phone              string `json:"phone,omitempty"`
+	IDNumber           string `json:"id_number,omitempty"`
+	AccountNumber      string `json:"account_number,omitempty"`
 }
 
 // AuthorizeResponse
 type AuthorizeResponse struct {
 	Status                      string `json:"status"` // AUTHORIZED, PENDING_AUTHENTICATION, DECLINED, ERROR
 	RemittanceID                string `json:"remittance_id"`
-	StepUpUrl                   string `json:"stepUpUrl,omitempty"`
-	AccessToken                 string `json:"accessToken,omitempty"`
+	StepUpUrl                   string `json:"step_up_url,omitempty"`
+	AccessToken                 string `json:"access_token,omitempty"`
 	Pareq                       string `json:"pareq,omitempty"`
-	AuthenticationTransactionId string `json:"authenticationTransactionId,omitempty"`
+	AuthenticationTransactionId string `json:"authentication_transaction_id,omitempty"`
 	Message                     string `json:"message,omitempty"`
 }
 
@@ -290,10 +334,14 @@ type BoANameCheckResponse struct {
 // RemittanceRequest is the full end-to-end remittance initiation request.
 type RemittanceRequest struct {
 	// Sender
-	SenderName    string `json:"sender_name" validate:"required"`
-	SenderEmail   string `json:"sender_email"`
-	SenderCountry string `json:"sender_country"`
-	SenderPhone   string `json:"sender_phone"`
+	SenderName         string `json:"sender_name" validate:"required"`
+	SenderEmail        string `json:"sender_email"`
+	SenderAddress      string `json:"sender_address"`
+	SenderCity         string `json:"sender_city"`
+	SenderState        string `json:"sender_state"`
+	SenderPostal       string `json:"sender_postal"`
+	SenderCountry      string `json:"sender_country"`
+	SenderPhone        string `json:"sender_phone"`
 
 	// Amount
 	SendAmount     string `json:"send_amount" validate:"required"`
@@ -301,8 +349,11 @@ type RemittanceRequest struct {
 	TargetCurrency string `json:"target_currency"` // defaults to ETB
 
 	// Receiver
-	ReceiverName  string `json:"receiver_name" validate:"required"`
-	ReceiverPhone string `json:"receiver_phone"`
+	ReceiverName        string `json:"receiver_name" validate:"required"`
+	ReceiverPhone       string `json:"receiver_phone"`
+	ReceiverAddress     string `json:"receiver_address"`
+	ReceiverCity        string `json:"receiver_city"`
+	ReceiverCountry     string `json:"receiver_country"`
 
 	// Payout
 	PayoutType    PayoutType `json:"payout_type" validate:"required"` // WITHIN_BOA, OTHER_BANK, TELEBIRR, MPESA

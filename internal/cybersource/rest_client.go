@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -43,11 +44,21 @@ func (c *RESTClient) CreateCaptureContext(req *CaptureContextRequest) (string, e
 	path := "/microform/v2/sessions"
 	respBody, err := c.doPost(path, req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("capture context generation failed: %w", err)
 	}
 
-	// The response for capture context is the JWT string itself in the body
-	return string(respBody), nil
+	var resp struct {
+		CaptureContext string `json:"captureContext"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		// Fallback: the body itself may be the JWT in some API versions
+		if strings.Count(string(respBody), ".") == 2 {
+			return string(respBody), nil
+		}
+		return "", fmt.Errorf("cybersource: failed to parse capture context response: %w", err)
+	}
+
+	return resp.CaptureContext, nil
 }
 
 // PASetup initiates the Payer Authentication Setup.
@@ -55,7 +66,7 @@ func (c *RESTClient) PASetup(req *PASetupRequest) (*PASetupResponse, error) {
 	path := "/risk/v1/authentication-setups"
 	respBody, err := c.doPost(path, req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("PA Setup failed: %w", err)
 	}
 
 	var resp PASetupResponse
@@ -66,11 +77,12 @@ func (c *RESTClient) PASetup(req *PASetupRequest) (*PASetupResponse, error) {
 	return &resp, nil
 }
 
-// AuthorizePayment performs a combined payment call (Auth + Capture + PA-Enrollment + TMS).
+// AuthorizePayment performs a combined payment call (Auth + Capture + PA-Enrollment).
 func (c *RESTClient) AuthorizePayment(req *PaymentRequest) (*PaymentResponse, error) {
 	path := "/pts/v2/payments"
 	respBody, err := c.doPost(path, req)
 	if err != nil {
+		log.Printf("ERROR: CyberSource authorize failed on %s: %v", path, err)
 		return nil, err
 	}
 

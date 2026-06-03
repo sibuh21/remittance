@@ -68,9 +68,9 @@ func main() {
 	}
 
 	// ─── Initialize Services ────────────────────────────────────────────────
-	collectionSvc := service.NewCollectionService(csRESTClient, cfg.CyberSource.ReturnURL)
+	collectionSvc := service.NewCollectionService(csRESTClient, db, cfg.CyberSource.ReturnURL)
 	payoutSvc := service.NewPayoutService(boaClient)
-	remittanceSvc := service.NewRemittanceService(collectionSvc, payoutSvc, db)
+	remittanceSvc := service.NewRemittanceService(collectionSvc, payoutSvc, db, cfg.CyberSource.TargetOrigins)
 
 	// ─── Initialize Handlers ────────────────────────────────────────────────
 	collectionHandler := handler.NewCollectionHandler(collectionSvc)

@@ -23,6 +23,7 @@ type remittanceService struct {
 		GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error)
 		GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error)
 	}
+	targetOrigins []string
 }
 
 // NewRemittanceService creates a new end-to-end remittance orchestrator.
@@ -37,18 +38,20 @@ func NewRemittanceService(
 		GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error)
 		GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error)
 	},
+	targetOrigins []string,
 ) domain.RemittanceService {
 	return &remittanceService{
 		collectionSvc: collectionSvc,
 		payoutSvc:     payoutSvc,
 		db:            db,
+		targetOrigins: targetOrigins,
 	}
 }
 
 // InitiateRemittance starts the remittance flow:
 // 1. Validate the request
-// 2. Validate the beneficiary via BoA
-// 3. Fetch exchange rate
+// 2. Validate the beneficiary via BoA (MOCKED)
+// 3. Fetch exchange rate (MOCKED)
 // 4. Generate CyberSource signed fields for collection
 // 5. Record the transaction in DB
 func (s *remittanceService) InitiateRemittance(req *domain.RemittanceRequest) (*domain.RemittanceResponse, error) {
@@ -103,9 +106,11 @@ func (s *remittanceService) InitiateRemittance(req *domain.RemittanceRequest) (*
 	}
 
 	// 4. Generate Capture Context for Flex Microform
-	// We'll use the server's own origins from config if we had them, 
-	// for now we pass a generic list or empty to let service decide.
-	captureContext, _ := s.collectionSvc.CreateCaptureContext([]string{"http://localhost:8090", "http://localhost:5173"})
+	captureContext, err := s.collectionSvc.CreateCaptureContext(s.targetOrigins)
+	if err != nil {
+		log.Printf("ERROR: Failed to generate CyberSource capture context: %v", err)
+		return nil, domain.NewAppError(http.StatusInternalServerError, "payment system error", "unable to initialize secure card entry")
+	}
 
 	// 5. Record the transaction in DB
 	txn := &domain.Transaction{
@@ -140,12 +145,11 @@ func (s *remittanceService) InitiateRemittance(req *domain.RemittanceRequest) (*
 		SendCurrency:   req.SendCurrency,
 		ExchangeRate:   exchangeRate,
 		ReceiveAmount:  receiveAmount,
-		CaptureContext: captureContext, // NEW
+		CaptureContext: captureContext,
 		Message:        fmt.Sprintf("Remittance initiated. Beneficiary: %s. Proceed to payment.", beneficiary.Name),
 		CreatedAt:      time.Now().UTC(),
 	}, nil
 }
-
 
 // ExecutePayout executes the outbound payout leg for a completed collection.
 func (s *remittanceService) ExecutePayout(remittanceID string) (*domain.PayoutResult, error) {
@@ -164,12 +168,12 @@ func (s *remittanceService) ExecutePayout(remittanceID string) (*domain.PayoutRe
 		return nil, domain.NewAppError(http.StatusBadRequest, "invalid status", fmt.Sprintf("cannot payout remittance in %s state", txn.Status))
 	}
 
-	// 3. Execute the appropriate payout based on type
+	// 3. Update status to PROCESSING
+	_ = s.db.UpdatePayoutResult(remittanceID, "", "PROCESSING", string(domain.RemittancePayoutProcessing))
+
+	// 4. Dispatch payout (calls mocked service)
 	var payoutResult *domain.PayoutResult
 	var payoutErr error
-
-	// Update status to PROCESSING
-	_ = s.db.UpdatePayoutResult(remittanceID, "", "PROCESSING", string(domain.RemittancePayoutProcessing))
 
 	switch txn.PayoutType {
 	case domain.PayoutWithinBoA:
@@ -184,12 +188,12 @@ func (s *remittanceService) ExecutePayout(remittanceID string) (*domain.PayoutRe
 	}
 
 	if payoutErr != nil {
-		log.Printf("ERROR: Payout processing failed for %s: %v", remittanceID, payoutErr)
+		log.Printf("ERROR: Payout failed for %s: %v", remittanceID, payoutErr)
 		_ = s.db.UpdatePayoutResult(remittanceID, "", "FAILED", string(domain.RemittanceFailed))
 		return nil, payoutErr
 	}
 
-	// 3. Update status to COMPLETED
+	// 5. Update status to COMPLETED
 	_ = s.db.UpdatePayoutResult(remittanceID, payoutResult.BoAReference, payoutResult.Status, string(domain.RemittanceCompleted))
 
 	return payoutResult, nil
@@ -204,39 +208,26 @@ func (s *remittanceService) TriggerManualPayout(req *domain.ManualPayoutRequest)
 
 	// 1. Find the transaction
 	if req.RemittanceID != "" {
-		// Lookup by ID
 		txn, err = s.db.GetTransactionByRef(req.RemittanceID)
 		if err != nil {
 			return nil, domain.NewAppError(http.StatusNotFound, "not found", "remittance transaction not found")
 		}
-
-		// If phone was also provided, verify it matches the specific transaction
 		if req.Phone != "" && txn.ReceiverPhone != req.Phone {
-			return nil, domain.NewAppError(http.StatusUnauthorized, "verification failed", "phone number does not match record for this remittance")
+			return nil, domain.NewAppError(http.StatusUnauthorized, "verification failed", "phone number does not match record")
 		}
 	} else if req.Phone != "" {
-		// Lookup by Phone - find the latest COLLECTED remittance for this phone
 		txns, err := s.db.GetTransactionsByReceiver(req.Phone, string(domain.RemittanceCollected))
 		if err != nil {
-			return nil, domain.NewAppError(http.StatusInternalServerError, "database error", "failed to lookup transactions by phone")
+			return nil, domain.NewAppError(http.StatusInternalServerError, "database error", "failed to lookup transactions")
 		}
 		if len(txns) == 0 {
-			return nil, domain.NewAppError(http.StatusNotFound, "not found", "no collected remittances found for this phone number")
+			return nil, domain.NewAppError(http.StatusNotFound, "not found", "no collected remittances found")
 		}
-		
-		// Take the most recent one (sorted by created_at DESC in DB)
 		txn = txns[0]
-		log.Printf("INFO: Found collected remittance %s for phone %s", txn.RemittanceID, req.Phone)
 	} else {
 		return nil, domain.NewAppError(http.StatusBadRequest, "invalid request", "either remittance_id or phone is required")
 	}
 
-	// 2. Status Check (already handled in ExecutePayout, but good to check early)
-	if txn.Status != domain.RemittanceCollected {
-		return nil, domain.NewAppError(http.StatusBadRequest, "invalid status", fmt.Sprintf("remittance is in %s state, not COLLECTED", txn.Status))
-	}
-
-	// 3. Delegate to ExecutePayout
 	return s.ExecutePayout(txn.RemittanceID)
 }
 
