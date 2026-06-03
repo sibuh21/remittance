@@ -1,13 +1,15 @@
 # Remittance Service
 
-A production-grade remittance service that combines **CyberSource** for inbound payment collection (international cards) with **Bank of Abyssinia (BoA)** for outbound payout disbursement to Ethiopian recipients.
+A production-grade remittance service that combines **CyberSource REST API** for inbound payment collection (international cards) with **Bank of Abyssinia (BoA)** for outbound payout disbursement (ETB) to Ethiopian recipients.
+
+This version implements **CyberSource Flex Microform** for secure card capture and **3DS 2.x** for advanced fraud protection and AFT compliance.
 
 ## Architecture
 
 ```
 ┌─────────────────┐                     ┌─────────────────────┐
 │   Sender (Intl) │                     │  Receiver (Ethiopia) │
-│   Credit/Debit  │                     │  Bank/Wallet Account │
+│  (Flex Microform)│                     │  Bank/Wallet Account │
 └────────┬────────┘                     └──────────▲───────────┘
          │                                         │
     ① Initiate                               ⑥ Disbursement
@@ -18,111 +20,98 @@ A production-grade remittance service that combines **CyberSource** for inbound 
 │                                                   │           │
 │  ┌────────────────┐    ┌─────────────────────────┤──┐        │
 │  │  Collection     │    │  Payout Service          │  │        │
-│  │  Service        │    │                          │  │        │
+│  │  Service (REST) │    │                          │  │        │
 │  │                 │    │  • Validate Beneficiary   │  │        │
-│  │  ② CyberSource  │    │  ⑤ Transfer Within BoA   │  │        │
-│  │  Hosted Checkout│    │    Transfer Other Bank    │  │        │
-│  │  (AFT)          │    │    Transfer Wallet        │  │        │
+│  │  ② Tokenize     │    │  ⑤ Transfer Within BoA   │  │        │
+│  │  ③ 3DS Auth     │    │    Transfer Other Bank    │  │        │
+│  │  ④ Authorize    │    │    Transfer Wallet        │  │        │
+│  │    (AFT)        │    │                          │  │        │
 │  └────────┬────────┘    └──────────▲───────────────┘  │        │
 │           │                        │                   │        │
-│      ③ Card Payment          ④ On ACCEPT              │        │
-│        Result                 trigger payout           │        │
+│      Result State           On SUCCESS                 │        │
+│      Machine                trigger payout             │        │
 └───────────────────────────────────────────────────────┘        │
          │                                         │             │
     CyberSource                              Bank of            │
-    Gateway                                 Abyssinia           │
+    REST API                                Abyssinia           │
                                              API                │
 ```
 
-## Flow
+## Key Features
+*   **PCI-DSS SAQ A Compliance**: Sensitive card data is tokenized via **Flex Microform** iframes; card details never touch your server.
+*   **AFT (Account Funding Transaction)**: Fully compliant with international remittance regulations, sending mandatory sender/recipient data to card schemes.
+*   **3DS 2.x Integration**: Native orchestration of Device Data Collection (DDC) and Identity Verification (Challenge) flows.
+*   **Multi-Payout Options**: Real-time disbursement via BoA internal transfer, EthSwitch (other banks), or Mobile Wallets (Telebirr/M-Pesa).
 
-1. **Sender initiates remittance** → `POST /api/remittance`
-2. System **validates beneficiary** via BoA name-fetch API
-3. System **fetches exchange rate** from BoA
-4. System generates **CyberSource signed checkout fields** → redirects sender to pay
-5. CyberSource processes card → **webhook** back with result
-6. On `ACCEPT` → system **disburses funds** via BoA (within-bank / other-bank / wallet)
+## Flow
+1.  **Sender initiates remittance** → Application creates a record and generates a `CaptureContext`.
+2.  **Card entry** → Frontend uses `CaptureContext` to initialize Flex Microform iframes.
+3.  **Tokenization** → Card data is exchanged for a `Transient Token` via CyberSource.
+4.  **Payer Auth (3DS)** → System performs background profiling (DDC) and handle challenges if required.
+5.  **Authorization** → System calls the REST API with the token and AFT fields to capture funds.
+6.  **Disbursement** → On successful authorization, the system triggers the BoA payout leg.
 
 ## API Endpoints
 
-### Remittance (End-to-End)
+### Collection (CyberSource REST & Flex)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/remittance` | Initiate remittance (validate + checkout fields) |
-| POST | `/api/remittance/callback` | CyberSource collection callback |
+| POST | `/api/collection/capture-context` | Generate JWT for Flex Microform initialization |
+| POST | `/api/collection/pa-setup` | Initiate 3DS 2.x Payer Authentication |
+| POST | `/api/collection/authorize` | Execute payment authorization (with AFT) |
+| POST | `/api/collection/validate` | Validate 3DS challenge result and authorize |
+| POST | `/api/collection/return` | 3DS challenge callback handler |
 
-### Collection (CyberSource Inbound)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/checkout` | Get signed fields for CyberSource hosted checkout |
-| POST | `/api/response` | CyberSource return URL (customer redirect) |
-| POST | `/api/webhook` | CyberSource silent POST notification |
-
-### Payout (Bank of Abyssinia Outbound)
+### Payout (Bank of Abyssinia)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/payout/validate` | Validate beneficiary account/wallet |
 | GET | `/api/payout/rate/:currency` | Get exchange rate (USD, EUR, etc.) |
 | GET | `/api/payout/banks` | List available banks for other-bank transfer |
-| GET | `/api/payout/balance` | Get settlement account balance |
 | GET | `/api/payout/status/:id` | Check payout transaction status |
-
-### Health
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Service health check |
 
 ## Getting Started
 
 ### Prerequisites
-- Go 1.23+
-- CyberSource Secure Acceptance credentials
-- Bank of Abyssinia API access (IPSec VPN + API Key + OAuth credentials)
+*   Go 1.21+
+*   Docker & Docker-compose (for PostgreSQL)
+*   CyberSource REST API Credentials (MID, Key ID, Shared Secret)
 
 ### Setup
 ```bash
-# 1. Copy and configure
+# 1. Environment and DB
+docker-compose up -d
+
+# 2. Configuration
 cp config/example_config.yaml config/config.yaml
-# Edit config/config.yaml with your credentials
+# Update config/config.yaml with your REST API keys
 
-# 2. Build
-go build -o bin/server ./cmd/server
-
-# 3. Run
-./bin/server
+# 3. Start Server
+go run cmd/server/main.go
 ```
 
-### Configuration
-See `config/example_config.yaml` for all available configuration options.
+## Testing
+1.  Visit `http://localhost:8090`.
+2.  Fill the form and click "Continue to Payment".
+3.  Use card `4111 1111 1111 1111` for a successful test transaction.
+4.  Use card `4000 0000 0000 0002` to test the 3DS 2.x challenge flow.
 
 ## Project Structure
 ```
 remittance/
-├── cmd/server/main.go            # Application entrypoint
-├── config/
-│   └── example_config.yaml       # Config template
+├── cmd/server/main.go            # Entrypoint & routing
+├── config/                       # YAML Configuration
+├── frontend/                     # Vanilla JS + CSS Client
 ├── internal/
-│   ├── domain/                   # Domain models, interfaces, errors
-│   │   ├── models.go             # All domain types
-│   │   ├── errors.go             # Structured error types
-│   │   └── enums.go              # Status enums & BoA error codes
-│   ├── cybersource/              # CyberSource client (HMAC, checkout)
-│   │   └── client.go
-│   ├── boa/                      # Bank of Abyssinia client (OAuth, transfers)
-│   │   └── client.go
-│   ├── service/                  # Business logic layer
-│   │   ├── collection.go         # Inbound collection service
-│   │   ├── payout.go             # Outbound payout service
-│   │   └── remittance.go         # End-to-end orchestrator
-│   └── handler/                  # HTTP handlers (Echo)
-│       ├── collection.go         # CyberSource endpoints
-│       ├── payout.go             # BoA payout endpoints
-│       └── remittance.go         # Remittance flow endpoints
-├── go.mod
-└── go.sum
+│   ├── cybersource/              # REST API Client & Signature logic
+│   ├── boa/                      # Bank of Abyssinia Client
+│   ├── service/                  # Business logic (Collection, Payout, Remittance)
+│   ├── handler/                  # HTTP Handlers
+│   └── domain/                   # Models, Interfaces, Enums
+└── docker-compose.yml            # Infrastructure (PostgreSQL)
 ```
 
 ## Security
-- **CyberSource**: HMAC-SHA256 signature verification on all webhooks
-- **BoA**: OAuth 2.0 with automatic token refresh, x-api-key header, TLS + IPSec VPN
-- All secrets in `config.yaml` (gitignored)
+*   **REST Signature**: All API requests use HMAC-SHA256 HTTP Signature authentication.
+*   **3DS 2.x**: Mandatory for all European and high-risk transactions.
+*   **Data Minimization**: Cards are not stored; tokens are transient.

@@ -1,15 +1,14 @@
-/* ─── CSS Variables & Theme ──────────────────────────────────────────────────── */
 :root {
-    --color-bg: #0b0c11;
-    --color-surface: #161a23;
-    --color-surface-hover: #1e2432;
-    --color-card: rgba(26, 31, 46, 0.85);
-    --color-border: rgba(99, 102, 241, 0.15);
-    --color-border-hover: rgba(99, 102, 241, 0.35);
-    --color-primary: #6366f1;
-    --color-primary-hover: #818cf8;
-    --color-primary-glow: rgba(99, 102, 241, 0.25);
-    --color-accent: #8b5cf6;
+    --color-bg: #05060b;
+    --color-surface: #0f121a;
+    --color-surface-hover: #161a25;
+    --color-card: rgba(15, 18, 26, 0.9);
+    --color-border: rgba(99, 102, 241, 0.2);
+    --color-border-hover: rgba(99, 102, 241, 0.4);
+    --color-primary: #4f46e5;
+    --color-primary-hover: #6366f1;
+    --color-primary-glow: rgba(79, 70, 229, 0.3);
+    --color-accent: #9333ea;
     --color-success: #22c55e;
     --color-success-bg: rgba(34, 197, 94, 0.1);
     --color-error: #ef4444;
@@ -43,69 +42,92 @@ body {
     min-height: 100vh;
     line-height: 1.6;
     background-image: 
-        radial-gradient(ellipse at 10% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 40%),
-        radial-gradient(ellipse at 90% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 40%);
-}
-
-.app-container {
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
+        radial-gradient(circle at 0% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 35%),
+        radial-gradient(circle at 100% 0%, rgba(139, 92, 246, 0.12) 0%, transparent 35%),
+        radial-gradient(circle at 50% 100%, rgba(99, 102, 241, 0.1) 0%, transparent 40%);
+    background-attachment: fixed;
 }
 
 /* ─── Header ────────────────────────────────────────────────────────────────── */
 .header {
-    padding: 1.25rem 2rem;
-    background: rgba(11, 12, 17, 0.8);
-    backdrop-filter: blur(20px);
-    border-bottom: 1px solid var(--color-border);
+    padding: 1rem 2rem;
+    background: rgba(11, 12, 17, 0.85);
+    backdrop-filter: blur(25px);
+    -webkit-backdrop-filter: blur(25px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     position: sticky;
     top: 0;
-    z-index: 100;
+    z-index: 1000;
 }
 
 .header-content {
-    max-width: 1200px;
+    max-width: 1100px;
     margin: 0 auto;
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
 
-.logo {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
 .logo-text {
-    font-size: 1.5rem;
+    font-size: 1.4rem;
     font-weight: 800;
-    background: linear-gradient(135deg, #fff 40%, var(--color-primary));
+    background: linear-gradient(to right, #ffffff, #a5b4fc);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.03em;
+}
+
+.header-status {
+    background: rgba(34, 197, 94, 0.1);
+    color: #4ade80;
+    padding: 0.4rem 0.8rem;
+    border-radius: 2rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.header-status::before {
+    content: '';
+    display: block;
+    width: 6px;
+    height: 6px;
+    background: #4ade80;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #4ade80;
 }
 
 /* ─── Main Content ──────────────────────────────────────────────────────────── */
 .main-content {
     flex: 1;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: center;
-    padding: 4rem 2rem;
+    padding: 3rem 1.5rem;
 }
 
 .remittance-card {
-    max-width: 600px;
+    max-width: 580px;
     width: 100%;
-    background: var(--color-card);
-    border: 1px solid var(--color-border);
+    background: linear-gradient(145deg, rgba(26, 31, 46, 0.85), rgba(17, 20, 29, 0.95));
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: var(--radius-xl);
-    padding: 2.5rem;
-    box-shadow: var(--shadow-lg);
+    padding: 3rem;
+    box-shadow: 
+        0 20px 50px rgba(0, 0, 0, 0.5),
+        inset 0 1px 1px rgba(255, 255, 255, 0.05);
     backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    animation: cardEntrance 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cardEntrance {
+    from { opacity: 0; transform: translateY(30px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .card-title {
@@ -286,5 +308,160 @@ body {
 
 .status-badge.completed { background: var(--color-success-bg); color: var(--color-success); }
 
+/* ─── Modals (Payment & Challenge) ────────────────────────────────────────── */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(11, 12, 17, 0.9);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 2rem;
+    transition: opacity 0.3s ease;
+}
+
+.modal-card, .challenge-card {
+    background: var(--color-surface);
+    width: 100%;
+    max-width: 450px;
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+    position: relative;
+    animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.challenge-card {
+    max-width: 600px;
+}
+
+@keyframes slideUp {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.modal-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--color-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.close-modal {
+    background: none;
+    border: none;
+    color: var(--color-text-dim);
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.modal-body {
+    padding: 2rem;
+}
+
+.payment-summary {
+    background: var(--color-card);
+    padding: 1rem;
+    border-radius: var(--radius-md);
+    margin-bottom: 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.summary-label {
+    font-size: 0.8rem;
+    color: var(--color-text-dim);
+}
+
+.summary-amount {
+    font-weight: 700;
+    color: var(--color-primary);
+}
+
+/* ─── CyberSource Flex Iframes ────────────────────────────────────────────── */
+.flex-iframe-container {
+    height: 48px;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0 1rem;
+    display: flex;
+    align-items: center;
+}
+
+.flex-iframe-container:focus-within {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-glow);
+}
+
+.expiry-inputs {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.expiry-divider {
+    color: var(--color-text-dim);
+}
+
+.form-input.short {
+    width: 60px;
+    text-align: center;
+}
+
+.card-input-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.secure-footer {
+    margin-top: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--color-text-dim);
+}
+
+.error-message {
+    padding: 0.75rem;
+    background: var(--color-error-bg);
+    color: var(--color-error);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    margin: 1rem 0;
+}
+
+.challenge-iframe-box {
+    width: 100%;
+    min-height: 400px;
+    background: white; /* 3DS challenge iframes are usually white */
+}
+
+.cancel-btn {
+    width: 100%;
+    padding: 1rem;
+    background: none;
+    border: none;
+    color: var(--color-text-dim);
+    cursor: pointer;
+    font-weight: 600;
+}
+
 /* ─── Utilities ─────────────────────────────────────────────────────────────── */
-.hidden { display: none; }
+.hidden { display: none !important; }

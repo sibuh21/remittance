@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=1.1">
 </head>
 <body>
     <div class="app-container">
@@ -16,8 +16,8 @@
                 <div class="logo">
                     <span class="logo-text">GlobalRemit</span>
                 </div>
-                <div class="header-status" id="connection-status">
-                    <small>BoA Protected</small>
+                <div class="header-status">
+                    BoA Secured
                 </div>
             </div>
         </header>
@@ -120,11 +120,70 @@
 
         <form id="cybersource-form" method="POST" style="display:none;"></form>
 
+        <!-- Payment Modal (CyberSource Flex Microform) -->
+        <div id="payment-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <h2 class="modal-title">Secure Payment</h2>
+                    <button type="button" class="close-modal" id="close-payment-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="payment-summary">
+                        <span class="summary-label">Total to Pay</span>
+                        <span class="summary-amount" id="modal-total">0.00 USD</span>
+                    </div>
+
+                    <div class="card-input-container">
+                        <div class="form-group full-width">
+                            <label class="form-label">Card Number</label>
+                            <div id="card-number-container" class="flex-iframe-container"></div>
+                        </div>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label class="form-label">Expiry (MM/YY)</label>
+                                <div class="expiry-inputs">
+                                    <input type="text" id="exp-month" class="form-input short" placeholder="MM" maxlength="2">
+                                    <span class="expiry-divider">/</span>
+                                    <input type="text" id="exp-year" class="form-input short" placeholder="YY" maxlength="2">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Security Code</label>
+                                <div id="security-code-container" class="flex-iframe-container"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="payment-error" class="error-message hidden"></div>
+                    
+                    <button type="button" class="submit-btn" id="authorize-btn">Authorize Payment</button>
+                    
+                    <div class="secure-footer">
+                        <img src="https://img.icons8.com/ios-filled/50/6366f1/shield.png" alt="secure" width="16">
+                        <span>PCI-DSS Compliant Secure Payment</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3DS Orchestration Containers -->
+        <div id="ddc-container" class="hidden"></div>
+        <div id="challenge-modal" class="modal-overlay hidden">
+            <div class="challenge-card">
+                <div class="modal-header">
+                    <h2 class="modal-title">Identity Verification</h2>
+                </div>
+                <div id="challenge-container" class="challenge-iframe-box"></div>
+                <button type="button" class="cancel-btn" id="cancel-challenge">Cancel</button>
+            </div>
+        </div>
+
         <footer class="footer" style="text-align:center; padding: 2rem; color: var(--color-text-dim); font-size: 0.8rem;">
             &copy; 2026 GlobalRemit. Powered by CyberSource & Bank of Abyssinia.
         </footer>
     </div>
 
-    <script src="checkout.js"></script>
+    <!-- CyberSource Flex SDK will be loaded dynamically -->
+    <script src="checkout.js?v=1.1"></script>
 </body>
 </html>

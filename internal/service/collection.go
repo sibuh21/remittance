@@ -2,118 +2,160 @@ package service
 
 import (
 	"fmt"
-	"log"
-	"net/http"
-	"time"
 
 	"remittance-service/internal/cybersource"
 	"remittance-service/internal/domain"
 )
 
 type collectionService struct {
-	csClient *cybersource.Client
+	csRESTClient *cybersource.RESTClient // NEW
+	returnURL    string
 }
 
-// NewCollectionService creates a new CollectionService backed by the CyberSource client.
-func NewCollectionService(csClient *cybersource.Client) domain.CollectionService {
-	return &collectionService{csClient: csClient}
+// NewCollectionService creates a new CollectionService.
+func NewCollectionService(csRESTClient *cybersource.RESTClient, returnURL string) domain.CollectionService {
+	return &collectionService{
+		csRESTClient: csRESTClient,
+		returnURL:    returnURL,
+	}
 }
 
-// GenerateSignedFields creates the signed form fields for the CyberSource hosted checkout POST.
-func (s *collectionService) GenerateSignedFields(req *domain.CheckoutRequest) (*domain.SignedFieldsResponse, error) {
-	if err := req.Validate(); err != nil {
-		return nil, domain.NewAppError(http.StatusBadRequest, "validation failed", err.Error())
+// === Flex Microform (REST API) Methods ===
+
+func (s *collectionService) CreateCaptureContext(origins []string) (string, error) {
+	req := &cybersource.CaptureContextRequest{
+		TargetOrigins: origins,
+	}
+	return s.csRESTClient.CreateCaptureContext(req)
+}
+
+func (s *collectionService) SetupPASetup(req *domain.PASetupRequest) (*domain.PASetupResponse, error) {
+	paReq := &cybersource.PASetupRequest{
+		ClientReferenceInformation: cybersource.ClientReferenceInfo{
+			Code: req.RemittanceID,
+		},
+		TokenInformation: &cybersource.PASetupTokenInfo{
+			TransientToken: req.TransientTokenJti,
+		},
 	}
 
-	locale := req.Locale
-	if locale == "" {
-		locale = "en"
-	}
-	paymentMethod := req.PaymentMethod
-	if paymentMethod == "" {
-		paymentMethod = "card"
+	resp, err := s.csRESTClient.PASetup(paReq)
+	if err != nil {
+		return nil, fmt.Errorf("PA Setup failed: %w", err)
 	}
 
-	fields := s.csClient.GenerateSignedFields(req.Amount, req.Currency, locale, paymentMethod)
-
-	return &domain.SignedFieldsResponse{
-		AccessKey:          fields.AccessKey,
-		Amount:             fields.Amount,
-		Currency:           fields.Currency,
-		Locale:             fields.Locale,
-		PaymentMethod:      fields.PaymentMethod,
-		ProfileID:          fields.ProfileID,
-		ReferenceNumber:    fields.ReferenceNumber,
-		SignedDateTime:     fields.SignedDateTime,
-		SignedFieldNames:   fields.SignedFieldNames,
-		TransactionType:    fields.TransactionType,
-		TransactionUUID:    fields.TransactionUUID,
-		UnsignedFieldNames: fields.UnsignedFieldNames,
-		Signature:          fields.Signature,
-		CheckoutURL:        s.csClient.CheckoutURL(),
+	return &domain.PASetupResponse{
+		AccessToken:             resp.ConsumerAuthenticationInfo.AccessToken,
+		DeviceDataCollectionUrl: resp.ConsumerAuthenticationInfo.DeviceChannel, // This is sometimes returned here or in setupUrl depending on version
+		ReferenceId:             resp.ID,
 	}, nil
 }
 
-// HandleWebhook processes the response/webhook from CyberSource after payment.
-func (s *collectionService) HandleWebhook(data map[string]string) (*domain.PaymentResult, error) {
-	// Verify the signature to ensure the data is from CyberSource
-	if !s.csClient.VerifySignature(data) {
-		log.Printf("WARNING: Invalid signature received from CyberSource webhook")
-		return nil, domain.NewAppError(
-			http.StatusForbidden,
-			"invalid signature",
-			"the webhook signature verification failed",
-		)
+func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*domain.AuthorizeResponse, error) {
+	paReq := s.buildPaymentRequest(req, []string{"CONSUMER_AUTHENTICATION", "TOKEN_CREATE"})
+	resp, err := s.csRESTClient.AuthorizePayment(paReq)
+	if err != nil {
+		return nil, err
 	}
 
-	decision := data["decision"]
-	reasonCode := data["reason_code"]
-	transactionID := data["transaction_id"]
-	referenceNumber := data["req_reference_number"]
-	amount := data["req_amount"]
-	currency := data["req_currency"]
-	authCode := data["auth_code"]
-	message := data["message"]
+	return s.mapPaymentResponse(resp, req.RemittanceID)
+}
 
-	result := &domain.PaymentResult{
-		ID:              transactionID,
-		Amount:          amount,
-		Currency:        currency,
-		AuthCode:        authCode,
-		ReferenceNumber: referenceNumber,
-		ProcessedAt:     time.Now().UTC(),
+func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*domain.AuthorizeResponse, error) {
+	// For Step 7, we call the same payment endpoint but with a different action list and the auth transaction ID
+	paReq := &cybersource.PaymentRequest{
+		ClientReferenceInformation: cybersource.ClientReferenceInfo{
+			Code: req.RemittanceID,
+		},
+		ProcessingInformation: cybersource.ProcessingInfo{
+			Capture:    true,
+			ActionList: []string{"VALIDATE_CONSUMER_AUTHENTICATION"},
+		},
+		ConsumerAuthenticationInfo: &cybersource.ConsumerAuthInfo{
+			AuthenticationTransactionId: req.AuthenticationTransactionId,
+		},
 	}
 
-	switch decision {
-	case "ACCEPT":
-		result.Status = domain.StatusAccepted
-		result.Message = "Payment accepted successfully"
-		log.Printf("INFO: Payment ACCEPTED - TxnID: %s, Ref: %s, Amount: %s %s",
-			transactionID, referenceNumber, amount, currency)
-	case "DECLINE":
-		result.Status = domain.StatusDeclined
-		result.Message = fmt.Sprintf("Payment declined: %s (reason: %s)", message, reasonCode)
-		log.Printf("WARNING: Payment DECLINED - TxnID: %s, Reason: %s, Message: %s",
-			transactionID, reasonCode, message)
-	case "REVIEW":
-		result.Status = domain.StatusReview
-		result.Message = fmt.Sprintf("Payment under review: %s", message)
-		log.Printf("INFO: Payment REVIEW - TxnID: %s, Reason: %s", transactionID, reasonCode)
-	case "CANCEL":
-		result.Status = domain.StatusCancel
-		result.Message = "Payment was cancelled"
-		log.Printf("INFO: Payment CANCELLED - Ref: %s", referenceNumber)
-	case "ERROR":
-		result.Status = domain.StatusError
-		result.Message = fmt.Sprintf("CyberSource Error: %s (Reason Code: %s)", message, reasonCode)
-		log.Printf("ERROR: CyberSource returned ERROR - Reason: %s, Message: %s, TxnID: %s",
-			reasonCode, message, transactionID)
-	default:
-		result.Status = domain.StatusError
-		result.Message = fmt.Sprintf("Unexpected decision: %s", decision)
-		log.Printf("ERROR: Unknown payment decision '%s' - TxnID: %s, Code: %s, Msg: %s",
-			decision, transactionID, reasonCode, message)
+	resp, err := s.csRESTClient.AuthorizePayment(paReq)
+	if err != nil {
+		return nil, err
 	}
 
-	return result, nil
+	return s.mapPaymentResponse(resp, req.RemittanceID)
+}
+
+func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, actionList []string) *cybersource.PaymentRequest {
+	return &cybersource.PaymentRequest{
+		ClientReferenceInformation: cybersource.ClientReferenceInfo{
+			Code: req.RemittanceID,
+		},
+		ProcessingInformation: cybersource.ProcessingInfo{
+			Capture:           true,
+			CommerceIndicator: "internet",
+			ActionList:        actionList,
+			ActionTokenTypes:  []string{"customer", "paymentInstrument", "instrumentIdentifier"},
+			AuthorizationOptions: &cybersource.AuthOptions{
+				AFTIndicator: "true",
+				FundingOptions: &cybersource.FundingOptions{
+					Initiator: &cybersource.FundingInitiator{Type: "S"},
+				},
+			},
+		},
+		OrderInformation: cybersource.OrderInfo{
+			BillTo: cybersource.BillTo{
+				FirstName:  req.Sender.FirstName,
+				LastName:   req.Sender.LastName,
+				Email:      req.Sender.Email,
+				Address1:   req.Sender.Address,
+				Locality:   req.Sender.City,
+				Country:    req.Sender.Country,
+				PostalCode: req.Sender.PostalCode,
+			},
+			AmountDetails: cybersource.AmountDetails{
+				TotalAmount: req.Amount,
+				Currency:    req.Currency,
+			},
+		},
+		TokenInformation: &cybersource.TokenInfo{
+			TransientTokenJWT: req.TransientTokenJWT,
+		},
+		ConsumerAuthenticationInfo: &cybersource.ConsumerAuthInfo{
+			ReferenceId:   req.PAReferenceId,
+			ReturnUrl:     s.returnURL,
+			DeviceChannel: "Browser",
+		},
+		SenderInformation: &cybersource.SenderInfo{
+			FirstName:   req.Sender.FirstName,
+			LastName:    req.Sender.LastName,
+			Address1:    req.Sender.Address,
+			Locality:    req.Sender.City,
+			CountryCode: req.Sender.CountryISO3,
+		},
+		RecipientInformation: &cybersource.RecipientInfo{
+			FirstName: req.Recipient.FirstName,
+			LastName:  req.Recipient.LastName,
+			Country:   req.Recipient.CountryISO3,
+		},
+	}
+}
+
+func (s *collectionService) mapPaymentResponse(resp *cybersource.PaymentResponse, remittanceID string) (*domain.AuthorizeResponse, error) {
+	domainResp := &domain.AuthorizeResponse{
+		Status:       resp.Status,
+		RemittanceID: remittanceID,
+	}
+
+	if resp.Status == "PENDING_AUTHENTICATION" && resp.ConsumerAuthenticationInfo != nil {
+		domainResp.StepUpUrl = resp.ConsumerAuthenticationInfo.StepUpUrl
+		domainResp.AccessToken = resp.ConsumerAuthenticationInfo.AccessToken
+		domainResp.AuthenticationTransactionId = resp.ConsumerAuthenticationInfo.AuthenticationTransactionId
+	}
+
+	if resp.Status == "DECLINED" || resp.Status == "REJECTED" || resp.Status == "PARTIAL_AUTHORIZED" {
+		if resp.ErrorInformation != nil {
+			domainResp.Message = resp.ErrorInformation.Message
+		}
+	}
+
+	return domainResp, nil
 }

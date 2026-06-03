@@ -25,14 +25,15 @@ type Client struct {
 	httpClient   *http.Client
 
 	// Token management with thread-safe refresh
-	mu           sync.RWMutex
-	accessToken  string
-	refreshToken string
-	tokenExpiry  time.Time
+	mu             sync.RWMutex
+	accessToken    string
+	refreshToken   string
+	tokenExpiry    time.Time
+	onTokenRefresh func(string) // Callback for saving rotated tokens
 }
 
 // NewClient creates a new Bank of Abyssinia API client.
-func NewClient(baseURL, tokenURL, clientID, clientSecret, refreshToken, apiKey string) (*Client, error) {
+func NewClient(baseURL, tokenURL, clientID, clientSecret, refreshToken, apiKey string, onTokenRefresh func(string)) (*Client, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	tokenURL = strings.TrimRight(strings.TrimSpace(tokenURL), "/")
 
@@ -49,12 +50,13 @@ func NewClient(baseURL, tokenURL, clientID, clientSecret, refreshToken, apiKey s
 	}
 
 	client := &Client{
-		baseURL:      baseURL,
-		tokenURL:     tokenURL,
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		apiKey:       apiKey,
-		refreshToken: refreshToken,
+		baseURL:        baseURL,
+		tokenURL:       tokenURL,
+		clientID:       clientID,
+		clientSecret:   clientSecret,
+		apiKey:         apiKey,
+		refreshToken:   refreshToken,
+		onTokenRefresh: onTokenRefresh,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -127,6 +129,12 @@ func (c *Client) Authenticate() error {
 	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
 	log.Printf("INFO: BoA access token obtained (expires in %ds)", tokenResp.ExpiresIn)
+
+	// Persist the rotated refresh token if a handler is provided
+	if c.onTokenRefresh != nil {
+		go c.onTokenRefresh(c.refreshToken)
+	}
+
 	return nil
 }
 

@@ -22,6 +22,14 @@ type Config struct {
 	} `mapstructure:"server"`
 
 	CyberSource struct {
+		MerchantID    string   `mapstructure:"merchant_id"`
+		KeyID         string   `mapstructure:"key_id"`
+		SharedSecret  string   `mapstructure:"shared_secret"`
+		BaseURL       string   `mapstructure:"base_url"`
+		TargetOrigins []string `mapstructure:"target_origins"`
+		ReturnURL     string   `mapstructure:"return_url"`
+
+		// Legacy (for backward compatibility if needed)
 		AccessKey   string `mapstructure:"access_key"`
 		ProfileID   string `mapstructure:"profile_id"`
 		SecretKey   string `mapstructure:"secret_key"`
@@ -90,41 +98,7 @@ func (r CheckoutRequest) Validate() error {
 	)
 }
 
-// SignedFieldsResponse is returned to the frontend with all signed fields + signature
-// needed to POST the form to CyberSource Hosted Checkout.
-type SignedFieldsResponse struct {
-	AccessKey          string `json:"access_key"`
-	Amount             string `json:"amount"`
-	Currency           string `json:"currency"`
-	Locale             string `json:"locale"`
-	PaymentMethod      string `json:"payment_method"`
-	ProfileID          string `json:"profile_id"`
-	ReferenceNumber    string `json:"reference_number"`
-	SignedDateTime     string `json:"signed_date_time"`
-	SignedFieldNames   string `json:"signed_field_names"`
-	TransactionType    string `json:"transaction_type"`
-	TransactionUUID    string `json:"transaction_uuid"`
-	UnsignedFieldNames string `json:"unsigned_field_names"`
-	Signature          string `json:"signature"`
-	CheckoutURL        string `json:"checkout_url"`
-}
 
-// CyberSourceWebhookData represents the data received from CyberSource
-// via return URL POST or silent-order POST (webhook).
-type CyberSourceWebhookData struct {
-	Decision         string `form:"decision" json:"decision"`
-	ReasonCode       string `form:"reason_code" json:"reason_code"`
-	TransactionID    string `form:"transaction_id" json:"transaction_id"`
-	ReqReferenceNum  string `form:"req_reference_number" json:"req_reference_number"`
-	ReqAmount        string `form:"req_amount" json:"req_amount"`
-	ReqCurrency      string `form:"req_currency" json:"req_currency"`
-	AuthAmount       string `form:"auth_amount" json:"auth_amount"`
-	AuthCode         string `form:"auth_code" json:"auth_code"`
-	AuthTime         string `form:"auth_time" json:"auth_time"`
-	Message          string `form:"message" json:"message"`
-	SignedFieldNames string `form:"signed_field_names" json:"signed_field_names"`
-	Signature        string `form:"signature" json:"signature"`
-}
 
 // PaymentResult is the response after processing a CyberSource webhook.
 type PaymentResult struct {
@@ -137,6 +111,89 @@ type PaymentResult struct {
 	RemittanceID    string        `json:"remittance_id,omitempty"`
 	Message         string        `json:"message,omitempty"`
 	ProcessedAt     time.Time     `json:"processed_at"`
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Flex Microform (REST API) Orchestration Models
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// CaptureContextRequest
+type CaptureContextRequest struct {
+	TargetOrigins []string `json:"target_origins"`
+}
+
+// PASetupRequest
+type PASetupRequest struct {
+	RemittanceID      string `json:"remittance_id"`
+	TransientTokenJti string `json:"transientTokenJti"`
+}
+
+// PASetupResponse
+type PASetupResponse struct {
+	AccessToken             string `json:"accessToken"`
+	DeviceDataCollectionUrl string `json:"deviceDataCollectionUrl"`
+	ReferenceId             string `json:"referenceId"`
+}
+
+// AuthorizeRequest (Step 5)
+type AuthorizeRequest struct {
+	RemittanceID      string          `json:"remittance_id"`
+	TransientTokenJWT string          `json:"transientTokenJwt"`
+	PAReferenceId     string          `json:"paReferenceId"`
+	Sender            RemittanceParty `json:"sender"`
+	Recipient         RemittanceParty `json:"recipient"`
+	Amount            string          `json:"amount"`
+	Currency          string          `json:"currency"`
+}
+
+// ValidateRequest (Step 7)
+type ValidateRequest struct {
+	RemittanceID                string `json:"remittance_id"`
+	AuthenticationTransactionId string `json:"authenticationTransactionId"`
+}
+
+type ConsumerAuthResponse struct {
+	AccessToken                 string `json:"accessToken,omitempty"`
+	StepUpUrl                   string `json:"stepUpUrl,omitempty"`
+	Pareq                       string `json:"pareq,omitempty"`
+	AuthenticationTransactionId string `json:"authenticationTransactionId,omitempty"`
+	AcsUrl                      string `json:"acsUrl,omitempty"`
+	VeresEnrolled               string `json:"veresEnrolled,omitempty"`
+	ParesStatus                 string `json:"paresStatus,omitempty"`
+	Eci                         string `json:"eci,omitempty"`
+	Cavv                        string `json:"cavv,omitempty"`
+	SpecificationVersion        string `json:"specificationVersion,omitempty"`
+	ChallengeRequired           string `json:"challengeRequired,omitempty"`
+	AuthenticationResult        string `json:"authenticationResult,omitempty"`
+	AuthenticationStatusMsg     string `json:"authenticationStatusMsg,omitempty"`
+	Indicator                   string `json:"indicator,omitempty"`
+	DeviceChannel               string `json:"deviceChannel,omitempty"` // For DDC URL
+}
+
+// RemittanceParty helper for AuthorizeRequest
+type RemittanceParty struct {
+	FirstName     string `json:"first_name"`
+	LastName      string `json:"last_name"`
+	Email         string `json:"email,omitempty"`
+	Address       string `json:"address"`
+	City          string `json:"city"`
+	Country       string `json:"country"`      // e.g. "UK"
+	CountryISO3   string `json:"country_iso3"` // e.g. "GBR"
+	PostalCode    string `json:"postal_code"`
+	Phone         string `json:"phone,omitempty"`
+	IDNumber      string `json:"id_number,omitempty"`
+	AccountNumber string `json:"account_number,omitempty"`
+}
+
+// AuthorizeResponse
+type AuthorizeResponse struct {
+	Status                      string `json:"status"` // AUTHORIZED, PENDING_AUTHENTICATION, DECLINED, ERROR
+	RemittanceID                string `json:"remittance_id"`
+	StepUpUrl                   string `json:"stepUpUrl,omitempty"`
+	AccessToken                 string `json:"accessToken,omitempty"`
+	Pareq                       string `json:"pareq,omitempty"`
+	AuthenticationTransactionId string `json:"authenticationTransactionId,omitempty"`
+	Message                     string `json:"message,omitempty"`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -277,16 +334,15 @@ func (r RemittanceRequest) Validate() error {
 
 // RemittanceResponse is the response after initiating a remittance.
 type RemittanceResponse struct {
-	RemittanceID  string           `json:"remittance_id"`
-	Status        RemittanceStatus `json:"status"`
-	SendAmount    string           `json:"send_amount"`
-	SendCurrency  string           `json:"send_currency"`
-	ExchangeRate  float64          `json:"exchange_rate,omitempty"`
-	ReceiveAmount string           `json:"receive_amount,omitempty"`
-	CheckoutURL   string           `json:"checkout_url,omitempty"` // CyberSource checkout URL
-	SignedFields  *SignedFieldsResponse `json:"signed_fields,omitempty"`
-	Message       string           `json:"message,omitempty"`
-	CreatedAt     time.Time        `json:"created_at"`
+	RemittanceID   string           `json:"remittance_id"`
+	Status         RemittanceStatus `json:"status"`
+	SendAmount     string           `json:"send_amount"`
+	SendCurrency   string           `json:"send_currency"`
+	ExchangeRate   float64          `json:"exchange_rate,omitempty"`
+	ReceiveAmount  string           `json:"receive_amount,omitempty"`
+	CaptureContext string           `json:"capture_context,omitempty"` // Flex Microform NEW
+	Message        string           `json:"message,omitempty"`
+	CreatedAt      time.Time        `json:"created_at"`
 }
 
 // PayoutResult is the result of an outbound payout via BoA.
@@ -367,8 +423,11 @@ type Transaction struct {
 
 // CollectionService handles inbound payment collection via CyberSource.
 type CollectionService interface {
-	GenerateSignedFields(req *CheckoutRequest) (*SignedFieldsResponse, error)
-	HandleWebhook(data map[string]string) (*PaymentResult, error)
+	// Flex Microform (REST API)
+	CreateCaptureContext(origins []string) (string, error)
+	SetupPASetup(req *PASetupRequest) (*PASetupResponse, error)
+	AuthorizePayment(req *AuthorizeRequest) (*AuthorizeResponse, error)
+	ValidateAndAuthorize(req *ValidateRequest) (*AuthorizeResponse, error)
 }
 
 // PayoutService handles outbound disbursement via Bank of Abyssinia.
@@ -386,9 +445,6 @@ type PayoutService interface {
 // RemittanceService orchestrates the end-to-end remittance flow.
 type RemittanceService interface {
 	InitiateRemittance(req *RemittanceRequest) (*RemittanceResponse, error)
-	// ProcessCollectionResult handles CyberSource result. Returns (result, alreadyProcessed, error).
-	// alreadyProcessed is true if the other channel (redirect or webhook) already processed this result.
-	ProcessCollectionResult(data map[string]string) (*PaymentResult, bool, error)
 	ExecutePayout(remittanceID string) (*PayoutResult, error)
 	TriggerManualPayout(req *ManualPayoutRequest) (*PayoutResult, error)
 	GetTransactionStatus(id string) (*Transaction, error)
@@ -398,9 +454,11 @@ type RemittanceService interface {
 
 // CollectionHandler handles CyberSource checkout HTTP endpoints.
 type CollectionHandler interface {
-	GenerateSignedFields(c echo.Context) error
-	HandleResponse(c echo.Context) error
-	HandleWebhook(c echo.Context) error
+	// Flex Microform
+	CreateCaptureContext(c echo.Context) error
+	SetupPayerAuth(c echo.Context) error
+	AuthorizePayment(c echo.Context) error
+	ValidateAndAuthorize(c echo.Context) error
 }
 
 // PayoutHandler handles Bank of Abyssinia payout HTTP endpoints.

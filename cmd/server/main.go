@@ -35,14 +35,14 @@ func main() {
 	}
 
 	// ─── Initialize CyberSource Client (Inbound Collection) ─────────────────
-	csClient, err := cybersource.NewClient(
-		cfg.CyberSource.AccessKey,
-		cfg.CyberSource.ProfileID,
-		cfg.CyberSource.SecretKey,
-		cfg.CyberSource.CheckoutURL,
+	csRESTClient, err := cybersource.NewRESTClient(
+		cfg.CyberSource.MerchantID,
+		cfg.CyberSource.KeyID,
+		cfg.CyberSource.SharedSecret,
+		cfg.CyberSource.BaseURL,
 	)
 	if err != nil {
-		log.Fatalf("Failed to create CyberSource client: %v", err)
+		log.Fatalf("Failed to create CyberSource REST client: %v", err)
 	}
 
 	// ─── Initialize Bank of Abyssinia Client (Outbound Payout) ──────────────
@@ -53,18 +53,27 @@ func main() {
 		cfg.BoA.ClientSecret,
 		cfg.BoA.RefreshToken,
 		cfg.BoA.APIKey,
+		func(newToken string) {
+			// Persist the rotated refresh token back to config.yaml
+			viper.Set("boa.refresh_token", newToken)
+			if err := viper.WriteConfig(); err != nil {
+				log.Printf("ERROR: Failed to save rotated BoA refresh token to file: %v", err)
+			} else {
+				log.Printf("INFO: BoA refresh token rotated and saved to config file")
+			}
+		},
 	)
 	if err != nil {
 		log.Fatalf("Failed to create BoA client: %v", err)
 	}
 
 	// ─── Initialize Services ────────────────────────────────────────────────
-	collectionSvc := service.NewCollectionService(csClient)
+	collectionSvc := service.NewCollectionService(csRESTClient, cfg.CyberSource.ReturnURL)
 	payoutSvc := service.NewPayoutService(boaClient)
 	remittanceSvc := service.NewRemittanceService(collectionSvc, payoutSvc, db)
 
 	// ─── Initialize Handlers ────────────────────────────────────────────────
-	collectionHandler := handler.NewCollectionHandler(collectionSvc, remittanceSvc)
+	collectionHandler := handler.NewCollectionHandler(collectionSvc)
 	payoutHandler := handler.NewPayoutHandler(payoutSvc)
 	remittanceHandler := handler.NewRemittanceHandler(remittanceSvc)
 
@@ -103,12 +112,36 @@ func main() {
 	api.GET("/remittance/receiver/:phone", remittanceHandler.ListReceiverRemittances)
 
 	// === Collection (CyberSource Inbound) ===
-	// POST /api/checkout  - Get signed fields for CyberSource hosted checkout
-	// POST /api/response  - CyberSource return URL (customer redirect)
-	// POST /api/webhook   - CyberSource silent POST notification
-	api.POST("/checkout", collectionHandler.GenerateSignedFields)
-	api.POST("/response", collectionHandler.HandleResponse)
-	api.POST("/webhook", collectionHandler.HandleWebhook)
+	// Flex Microform & 3DS
+	api.POST("/collection/capture-context", collectionHandler.CreateCaptureContext)
+	api.POST("/collection/pa-setup", collectionHandler.SetupPayerAuth)
+	api.POST("/collection/authorize", collectionHandler.AuthorizePayment)
+	api.POST("/collection/validate", collectionHandler.ValidateAndAuthorize)
+	
+	// 3DS Return Handler (Step 7 callback)
+	api.POST("/collection/return", func(c echo.Context) error {
+		return c.HTML(http.StatusOK, `
+			<!DOCTYPE html>
+			<html>
+			<head><title>Authentication Complete</title></head>
+			<body>
+				<script>
+					if (window.parent && window.parent.onchallengecomplete) {
+						window.parent.onchallengecomplete();
+					} else if (window.opener && window.opener.onchallengecomplete) {
+						window.opener.onchallengecomplete();
+					} else {
+						try { window.top.onchallengecomplete(); } catch(e) {}
+					}
+				</script>
+				<div style="text-align:center;font-family:sans-serif;margin-top:20px;">
+					<h3>Verification Complete</h3>
+					<p>This window will close automatically.</p>
+				</div>
+			</body>
+			</html>
+		`)
+	})
 
 	// === Payout (Bank of Abyssinia Outbound) ===
 	// POST /api/payout/validate      - Validate beneficiary account/wallet

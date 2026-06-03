@@ -34,6 +34,7 @@ type RemittanceStatus string
 const (
 	RemittanceInitiated          RemittanceStatus = "INITIATED"
 	RemittanceCollectionPending  RemittanceStatus = "COLLECTION_PENDING"
+	Remittance3DSPending         RemittanceStatus = "3DS_PENDING"
 	RemittanceCollected          RemittanceStatus = "COLLECTED"
 	RemittancePayoutPending      RemittanceStatus = "PAYOUT_PENDING"
 	RemittancePayoutProcessing   RemittanceStatus = "PAYOUT_PROCESSING"

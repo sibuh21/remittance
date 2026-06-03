@@ -102,17 +102,10 @@ func (s *remittanceService) InitiateRemittance(req *domain.RemittanceRequest) (*
 		}
 	}
 
-	// 4. Generate CyberSource signed fields for inbound collection
-	checkoutReq := &domain.CheckoutRequest{
-		Amount:   req.SendAmount,
-		Currency: req.SendCurrency,
-		Locale:   "en",
-	}
-
-	signedFields, err := s.collectionSvc.GenerateSignedFields(checkoutReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate checkout fields: %w", err)
-	}
+	// 4. Generate Capture Context for Flex Microform
+	// We'll use the server's own origins from config if we had them, 
+	// for now we pass a generic list or empty to let service decide.
+	captureContext, _ := s.collectionSvc.CreateCaptureContext([]string{"http://localhost:8090", "http://localhost:5173"})
 
 	// 5. Record the transaction in DB
 	txn := &domain.Transaction{
@@ -141,62 +134,18 @@ func (s *remittanceService) InitiateRemittance(req *domain.RemittanceRequest) (*
 	}
 
 	return &domain.RemittanceResponse{
-		RemittanceID:  remittanceID,
-		Status:        domain.RemittanceCollectionPending,
-		SendAmount:    req.SendAmount,
-		SendCurrency:  req.SendCurrency,
-		ExchangeRate:  exchangeRate,
-		ReceiveAmount: receiveAmount,
-		CheckoutURL:   signedFields.CheckoutURL,
-		SignedFields:  signedFields,
-		Message:       fmt.Sprintf("Remittance initiated. Beneficiary: %s. Proceed to payment.", beneficiary.Name),
-		CreatedAt:     time.Now().UTC(),
+		RemittanceID:   remittanceID,
+		Status:         domain.RemittanceCollectionPending,
+		SendAmount:     req.SendAmount,
+		SendCurrency:   req.SendCurrency,
+		ExchangeRate:   exchangeRate,
+		ReceiveAmount:  receiveAmount,
+		CaptureContext: captureContext, // NEW
+		Message:        fmt.Sprintf("Remittance initiated. Beneficiary: %s. Proceed to payment.", beneficiary.Name),
+		CreatedAt:      time.Now().UTC(),
 	}, nil
 }
 
-// ProcessCollectionResult handles the CyberSource result from either the
-// frontend redirect (HandleResponse) or the server-to-server callback (HandleWebhook).
-// Whichever arrives first updates the DB; the second call is a no-op.
-// Returns (result, alreadyProcessed, error).
-func (s *remittanceService) ProcessCollectionResult(data map[string]string) (*domain.PaymentResult, bool, error) {
-	result, err := s.collectionSvc.HandleWebhook(data)
-	if err != nil {
-		return nil, false, err
-	}
-
-	remittanceID := result.ReferenceNumber
-	result.RemittanceID = remittanceID
-
-	// Read the current transaction state
-	txn, err := s.db.GetTransactionByRef(remittanceID)
-	if err != nil {
-		log.Printf("WARNING: Transaction not found for ref %s: %v", remittanceID, err)
-		// Still return the result even without DB match
-		return result, false, nil
-	}
-
-	// Only update if still COLLECTION_PENDING — first-one-wins
-	if txn.Status != domain.RemittanceCollectionPending {
-		log.Printf("INFO: Remittance %s already processed (status: %s), skipping update", remittanceID, txn.Status)
-		return result, true, nil
-	}
-
-	if result.Status == domain.StatusAccepted {
-		log.Printf("INFO: Collection successful for ref %s - updating to COLLECTED", remittanceID)
-
-		err = s.db.UpdateCollectionResult(remittanceID, result.ID, string(result.Status), string(domain.RemittanceCollected))
-		if err != nil {
-			log.Printf("ERROR: Failed to update transaction on collection success: %v", err)
-		}
-
-		log.Printf("INFO: Collection successful for %s. Waiting for manual payout trigger.", remittanceID)
-	} else {
-		log.Printf("INFO: Collection not accepted for ref %s (status: %s)", remittanceID, result.Status)
-		_ = s.db.UpdateCollectionResult(remittanceID, result.ID, string(result.Status), string(domain.RemittanceFailed))
-	}
-
-	return result, false, nil
-}
 
 // ExecutePayout executes the outbound payout leg for a completed collection.
 func (s *remittanceService) ExecutePayout(remittanceID string) (*domain.PayoutResult, error) {
