@@ -102,7 +102,17 @@ func (db *DB) UpdatePayoutResult(remittanceID, boaRef, payoutStatus, status stri
 }
 
 func (db *DB) GetTransactionByRef(ref string) (*domain.Transaction, error) {
-	query := `SELECT * FROM transactions WHERE remittance_id = $1 OR cybersource_ref = $1`
+	query := `
+	SELECT 
+		id, remittance_id, status, sender_name, COALESCE(sender_email, ''),
+		source_amount, source_currency, COALESCE(cybersource_ref, ''), COALESCE(collection_status, ''),
+		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
+		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
+		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
+		created_at, updated_at 
+	FROM transactions 
+	WHERE remittance_id = $1 OR cybersource_ref = $1 OR id::text = $1`
+	
 	row := db.Conn.QueryRow(query, ref)
 
 	var t domain.Transaction
@@ -120,7 +130,17 @@ func (db *DB) GetTransactionByRef(ref string) (*domain.Transaction, error) {
 }
 
 func (db *DB) GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error) {
-	query := `SELECT * FROM transactions WHERE sender_email = $1`
+	query := `
+	SELECT 
+		id, remittance_id, status, sender_name, COALESCE(sender_email, ''),
+		source_amount, source_currency, COALESCE(cybersource_ref, ''), COALESCE(collection_status, ''),
+		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
+		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
+		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
+		created_at, updated_at 
+	FROM transactions 
+	WHERE sender_email = $1`
+	
 	args := []any{email}
 	if status != "" {
 		query += " AND status = $2"
@@ -153,7 +173,17 @@ func (db *DB) GetTransactionsBySender(email string, status string) ([]*domain.Tr
 }
 
 func (db *DB) GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error) {
-	query := `SELECT * FROM transactions WHERE receiver_phone = $1`
+	query := `
+	SELECT 
+		id, remittance_id, status, sender_name, COALESCE(sender_email, ''),
+		source_amount, source_currency, COALESCE(cybersource_ref, ''), COALESCE(collection_status, ''),
+		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
+		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
+		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
+		created_at, updated_at 
+	FROM transactions 
+	WHERE receiver_phone = $1`
+	
 	args := []any{phone}
 	if status != "" {
 		query += " AND status = $2"

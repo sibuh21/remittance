@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 
 	"remittance-service/internal/domain"
@@ -74,7 +75,15 @@ func (h *remittanceHandler) GetStatus(c echo.Context) error {
 
 	txn, err := h.svc.GetTransactionStatus(id)
 	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"message": "transaction not found"})
+		if err.Error() == "sql: no rows in result set" {
+			return c.JSON(http.StatusNotFound, map[string]string{"message": "transaction not found"})
+		}
+		// Log the actual error for the developer
+		log.Printf("ERROR: Database error in GetStatus: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"message": "failed to retrieve transaction status",
+			"detail":  err.Error(),
+		})
 	}
 
 	return h.formatTransactionResponse(c, txn)

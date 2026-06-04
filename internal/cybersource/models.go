@@ -29,6 +29,7 @@ type ProcessingInfo struct {
 	Capture              bool          `json:"capture"`
 	CommerceIndicator    string        `json:"commerceIndicator,omitempty"`
 	ActionList           []string      `json:"actionList"`
+	BusinessApplicationId string        `json:"businessApplicationId,omitempty"` // "PP" for Person-to-Person
 	ActionTokenTypes     []string      `json:"actionTokenTypes,omitempty"`
 	AuthorizationOptions *AuthOptions  `json:"authorizationOptions,omitempty"`
 }
@@ -63,7 +64,8 @@ type BillTo struct {
 	Email        string `json:"email"`
 	Address1     string `json:"address1"`
 	Locality     string `json:"locality"`
-	Country      string `json:"country"`
+	AdministrativeArea string `json:"administrativeArea"`
+	Country            string `json:"country"`
 	PostalCode   string `json:"postalCode"`
 	PhoneNumber  string `json:"phoneNumber,omitempty"`
 	District     string `json:"district,omitempty"`
@@ -76,11 +78,18 @@ type AmountDetails struct {
 }
 
 type TokenInfo struct {
-	TransientTokenJWT string `json:"transientTokenJwt"`
+	TransientTokenJWT string `json:"transientTokenJwt,omitempty"`
 }
 
 type PaymentInfo struct {
 	Customer *CustomerRef `json:"customer,omitempty"`
+	Card     *CardInfo    `json:"card,omitempty"`
+}
+
+type CardInfo struct {
+	ExpirationMonth string `json:"expirationMonth,omitempty"`
+	ExpirationYear  string `json:"expirationYear,omitempty"`
+	Type            string `json:"type,omitempty"`
 }
 
 type CustomerRef struct {
@@ -134,12 +143,12 @@ type SenderInfo struct {
 	LastName             string         `json:"lastName,omitempty"`
 	Address1             string         `json:"address1,omitempty"`
 	Locality             string         `json:"locality,omitempty"`
+	AdministrativeArea   string         `json:"administrativeArea"`
 	CountryCode          string         `json:"countryCode,omitempty"`
 	PostalCode           string         `json:"postalCode,omitempty"`
 	PhoneNumber          string         `json:"phoneNumber,omitempty"`
 	IdentificationNumber string         `json:"identificationNumber,omitempty"`
 	PersonalIdType       string         `json:"personalIdType,omitempty"` // "TXIN"
-	AdminArea            string         `json:"administrativeArea,omitempty"`
 	Type                 string         `json:"type,omitempty"`           // "B" = business
 	Name                 string         `json:"name,omitempty"`
 	ReferenceNumber      string         `json:"referenceNumber,omitempty"`
@@ -195,6 +204,8 @@ type ConsumerAuthResponse struct {
 	AuthenticationResult        string `json:"authenticationResult,omitempty"`
 	Indicator                   string `json:"indicator,omitempty"`
 	DeviceChannel               string `json:"deviceChannel,omitempty"`
+	DeviceDataCollectionUrl     string `json:"deviceDataCollectionUrl,omitempty"`
+	ReferenceId                 string `json:"referenceId,omitempty"`
 }
 
 type ProcessorInfo struct {
@@ -243,11 +254,13 @@ type PASetupRequest struct {
 }
 
 type PASetupTokenInfo struct {
-	TransientToken string `json:"transientToken"`
+	TransientToken    string `json:"transientToken,omitempty"`
+	TransientTokenJWT string `json:"transientTokenJwt,omitempty"`
 }
 
 type PASetupPaymentInfo struct {
-	Customer *CustomerRef `json:"customer"`
+	Customer *CustomerRef `json:"customer,omitempty"`
+	Card     *CardInfo    `json:"card,omitempty"`
 }
 
 type PASetupResponse struct {

@@ -1,5 +1,6 @@
 /**
  * GlobalRemit - Checkout Orchestration for CyberSource Flex Microform & 3DS 2.x
+ * Version: 1.2.1
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -193,9 +194,19 @@ document.addEventListener('DOMContentLoaded', () => {
         setPaymentLoading(true);
         paymentError.classList.add('hidden');
 
+        let year = expYear.value;
+        if (year && year.length === 2) {
+            year = '20' + year;
+        }
+
+        let month = expMonth.value;
+        if (month && month.length === 1) {
+            month = '0' + month;
+        }
+
         const options = {
-            expirationMonth: expMonth.value,
-            expirationYear: expYear.value
+            expirationMonth: month,
+            expirationYear: year
         };
 
         microform.createToken(options, async (err, tokenResponse) => {
@@ -205,45 +216,72 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            console.log('Transient Token created:', tokenResponse.jti);
+            // Normalize token response
+            const token = tokenResponse.token || (typeof tokenResponse === 'string' ? tokenResponse : '');
+            let jti = tokenResponse.jti;
+
+            // Fallback: If JTI is missing, parse it from the JWT payload
+            if (!jti && token.includes('.')) {
+                try {
+                    const base64Url = token.split('.')[1];
+                    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                    const payload = JSON.parse(window.atob(base64));
+                    jti = payload.jti;
+                } catch (e) {
+                    console.error('DEBUG: Failed to parse JTI from JWT:', e);
+                    jti = token; // Last resort
+                }
+            }
+
             
             try {
                 // Step 4: PA Setup
+                const paSetupBody = {
+                    remittance_id: currentRemittance.remittance_id,
+                    transient_token_jti: jti,
+                    transient_token_jwt: token,
+                    expiration_month: month,
+                    expiration_year: year
+                };
+                
+
                 const paSetupResp = await fetch('/api/collection/pa-setup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        remittance_id: currentRemittance.remittance_id,
-                        transient_token_jti: tokenResponse.jti
-                    })
+                    body: JSON.stringify(paSetupBody)
                 });
                 
                 const paData = await paSetupResp.json();
 
                 // Step 5: Device Data Collection (DDC)
-                await performDDC(paData.deviceDataCollectionUrl, paData.accessToken);
+                await performDDC(paData.device_data_collection_url, paData.access_token);
 
                 // Step 6: Authorization Request
                 await processAuthorization({
                     remittance_id: currentRemittance.remittance_id,
-                    transient_token_jwt: tokenResponse.token,
-                    pa_reference_id: paData.referenceId,
-                    amount: currentRemittance.send_amount,
+                    transient_token_jti: jti,
+                    transient_token_jwt: token,
+                    expiration_month: month,
+                    expiration_year: year,
+                    pa_reference_id: paData.reference_id,
+                    amount: parseFloat(document.getElementById('send_amount').value).toFixed(2),
                     currency: currentRemittance.send_currency,
                     sender: {
                         first_name: document.getElementById('sender_name').value.split(' ')[0],
                         last_name: document.getElementById('sender_name').value.split(' ').slice(1).join(' ') || 'Sender',
                         email: document.getElementById('sender_email').value,
-                        address: 'Global Remit Customer', // Simplified for demo
-                        city: 'Internet',
-                        country: document.getElementById('sender_country').value || 'USA',
-                        country_iso3: 'USA', // Map as needed
-                        postal_code: '10001'
+                        address: document.getElementById('sender_address').value,
+                        city: document.getElementById('sender_city').value,
+                        administrative_area: document.getElementById('sender_state').value,
+                        country: document.getElementById('sender_country').value,
+                        postal_code: document.getElementById('sender_postal').value
                     },
                     recipient: {
-                        first_name: document.getElementById('receiver_name').value.split(' ')[0],
+                        first_name: document.getElementById('receiver_name').value.split(' ')[0] || 'Recipient',
                         last_name: document.getElementById('receiver_name').value.split(' ').slice(1).join(' ') || 'Recipient',
-                        country_iso3: 'ETH'
+                        address: document.getElementById('receiver_address').value,
+                        city: document.getElementById('receiver_city').value,
+                        country: document.getElementById('receiver_country').value
                     }
                 });
 
@@ -265,11 +303,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 <iframe name="ddc-iframe" style="display:none;"></iframe>
             `;
             
+            // CyberSource DDC completion listener
+            const handleDDCMessage = (event) => {
+                try {
+                    const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                    if (data && data.MessageType === 'profile.completed') {
+                        console.log('DDC Profiling completed');
+                        window.removeEventListener('message', handleDDCMessage);
+                        resolve();
+                    }
+                } catch (e) {
+                    // Ignore non-JSON messages
+                }
+            };
+            
+            window.addEventListener('message', handleDDCMessage);
+            
             const form = document.getElementById('ddc-form');
             form.submit();
 
-            // Wait for DDC to finish (usually 2 seconds is enough for background profiling)
-            setTimeout(resolve, 2000);
+            // Fallback timeout after 5 seconds just in case
+            setTimeout(() => {
+                window.removeEventListener('message', handleDDCMessage);
+                resolve();
+            }, 5000);
         });
     }
 
@@ -283,11 +340,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const authResp = await response.json();
 
-        if (authResp.status === 'AUTHORIZED') {
-            window.location.href = `/checkout/success?ref=${currentRemittance.remittance_id}`;
+        if (authResp.status === 'AUTHORIZED' || authResp.status === 'AUTHORIZED_PENDING_REVIEW') {
+            const redirectUrl = authResp.status === 'AUTHORIZED_PENDING_REVIEW' ? '/checkout/review' : '/checkout/success';
+            window.location.href = `${redirectUrl}?ref=${currentRemittance.remittance_id}`;
         } else if (authResp.status === 'PENDING_AUTHENTICATION') {
             // STEP 7: Challenge Required
-            await handleChallenge(authResp.stepUpUrl, authResp.accessToken, authResp.authenticationTransactionId);
+            await handleChallenge(authResp.step_up_url, authResp.access_token, authResp.authentication_transaction_id);
         } else {
             throw new Error(authResp.message || 'Payment declined');
         }
