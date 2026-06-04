@@ -52,6 +52,7 @@ type Config struct {
 		ClientSecret string `mapstructure:"client_secret"`
 		RefreshToken string `mapstructure:"refresh_token"`
 		APIKey       string `mapstructure:"api_key"`
+		MockMode     bool   `mapstructure:"mock_mode"`
 	} `mapstructure:"boa"`
 
 	CORS struct {
@@ -254,8 +255,8 @@ type BoATokenResponse struct {
 
 // BoAAPIResponse is the generic wrapper for BoA API responses.
 type BoAAPIResponse struct {
-	Header BoAResponseHeader `json:"Header"`
-	Body   map[string]any    `json:"Body"`
+	Header BoAResponseHeader `json:"header"`
+	Body   map[string]any    `json:"body"`
 }
 
 // BoAResponseHeader holds the header part of BoA responses.
@@ -266,10 +267,8 @@ type BoAResponseHeader struct {
 
 // BoAAccountInfo is returned by getAccount APIs.
 type BoAAccountInfo struct {
-	AccountHolderName string `json:"accountHolderName"`
-	CurrencyCode      string `json:"currencyCode"`
-	EnquiryStatus     int    `json:"enquiryStatus"` // 0 = failure, 1 = success
-	ErrorCode         string `json:"errorCode,omitempty"`
+	CustomerName    string `json:"customerName"`
+	AccountCurrency string `json:"accountCurrency"`
 }
 
 // BoATransferWithinRequest is the request body for within-BoA transfers.
@@ -285,34 +284,39 @@ type BoAOtherBankTransferRequest struct {
 	ClientID      string `json:"client_id"`
 	Amount        string `json:"amount"`
 	Reference     string `json:"reference"`
-	BankID        string `json:"bankId"`
+	BankCode      string `json:"bankCode"`
 	AccountNumber string `json:"accountNumber"`
 	ReceiverName  string `json:"receiverName"`
 }
 
-// BoAWalletTransferRequest is the request body for Telebirr/Mpesa transfers.
+// BoAWalletTransferRequest is the request body for Telebirr/Mpesa or MoneySend transfers.
 type BoAWalletTransferRequest struct {
-	ClientID         string `json:"client_id"`
-	Amount           string `json:"amount"`
-	PhoneNumber      string `json:"phoneNumber"`
-	MMProvider       string `json:"mmProvider"` // TELEBIRR, MPESA
-	Reference        string `json:"reference"`
-	ReceiverName     string `json:"receiverName"`
-	OrderingCustomer string `json:"orderingCustomer"`
-	SenderPhone      string `json:"senderPhone"`
+	ClientID            string `json:"client_id"`
+	Amount              string `json:"amount"`
+	RemitterName        string `json:"remitterName"`
+	RemitterPhonenumber string `json:"remitterPhonenumber"`
+	ReceiverName        string `json:"receiverName"`
+	ReceiverAddress     string `json:"receiverAddress"`
+	ReceiverPhonenumber string `json:"receiverPhonenumber"`
+	Reference           string `json:"reference"`
+	SecretCode          string `json:"secretCode"`
+	DebitCurrency       string `json:"debitCurrency"`
+	CreditCurrency      string `json:"creditCurrency"`
+	MMProvider          string `json:"mmProvider,omitempty"` // Added for internal logic
 }
 
 // BoABankInfo holds bank information from the getBankId API.
 type BoABankInfo struct {
-	BankID   string `json:"bankId"`
-	BankName string `json:"bankName"`
+	BankID   string `json:"id"`
+	BankName string `json:"institutionName"`
 }
 
 // BoACurrencyRate holds exchange rate information.
 type BoACurrencyRate struct {
-	BaseCurrency   string  `json:"baseCurrency"`
-	TargetCurrency string  `json:"targetCurrency"`
-	Rate           float64 `json:"rate"`
+	CurrencyCode string `json:"currencyCode"`
+	CurrencyName string `json:"currencyName"`
+	BuyRate      string `json:"buyRate"`
+	SellRate     string `json:"sellRate"`
 }
 
 // BoABalanceResponse holds account balance response.
@@ -479,6 +483,21 @@ type CollectionService interface {
 	SetupPASetup(req *PASetupRequest) (*PASetupResponse, error)
 	AuthorizePayment(req *AuthorizeRequest) (*AuthorizeResponse, error)
 	ValidateAndAuthorize(req *ValidateRequest) (*AuthorizeResponse, error)
+}
+
+// BoAClient defines the interface for interacting with Bank of Abyssinia APIs.
+type BoAClient interface {
+	FetchAccountName(accountID string) (*BoAAccountInfo, error)
+	FetchAccountNameOtherBank(bankID, accountID string) (*BoAAccountInfo, error)
+	FetchNameTelebirr(phoneNumber string) (*BoANameCheckResponse, error)
+	FetchNameMpesa(phoneNumber string) (*BoANameCheckResponse, error)
+	TransferWithin(req *BoATransferWithinRequest) (*BoAAPIResponse, error)
+	TransferOtherBank(req *BoAOtherBankTransferRequest) (*BoAAPIResponse, error)
+	TransferWallet(req *BoAWalletTransferRequest) (*BoAAPIResponse, error)
+	GetBankIDs() ([]BoABankInfo, error)
+	GetTransactionStatus(transactionID string) (*BoAAPIResponse, error)
+	GetExchangeRate(baseCurrency string) (*BoAAPIResponse, error)
+	GetBalance() (*BoAAPIResponse, error)
 }
 
 // PayoutService handles outbound disbursement via Bank of Abyssinia.

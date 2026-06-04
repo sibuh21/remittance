@@ -15,17 +15,19 @@ type collectionService struct {
 	db           interface {
 		UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
 	}
-	returnURL string
+	returnURL   string
+	onCollected func(remittanceID string)
 }
 
 // NewCollectionService creates a new CollectionService.
 func NewCollectionService(csRESTClient *cybersource.RESTClient, db interface {
 	UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
-}, returnURL string) domain.CollectionService {
+}, returnURL string, onCollected func(string)) domain.CollectionService {
 	return &collectionService{
 		csRESTClient: csRESTClient,
 		db:           db,
 		returnURL:    returnURL,
+		onCollected:  onCollected,
 	}
 }
 
@@ -94,6 +96,9 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 	switch domainResp.Status {
 	case domain.CSStatusAuthorized, domain.CSStatusAuthorizedPendingReview:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollected))
+		if s.onCollected != nil {
+			s.onCollected(req.RemittanceID)
+		}
 	case domain.CSStatusPendingAuth:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollectionPending))
 	default:
@@ -130,6 +135,9 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 	switch domainResp.Status {
 	case domain.CSStatusAuthorized, domain.CSStatusAuthorizedPendingReview:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollected))
+		if s.onCollected != nil {
+			s.onCollected(req.RemittanceID)
+		}
 	default:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceFailed))
 	}

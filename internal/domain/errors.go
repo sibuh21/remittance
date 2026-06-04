@@ -38,14 +38,19 @@ type BoAError struct {
 }
 
 func (e *BoAError) Error() string {
+	msg := e.Message
 	if e.ErrorCode != "" {
 		desc, ok := BoAErrorCodes[e.ErrorCode]
 		if ok {
-			return fmt.Sprintf("BoA error %s (%s): %s", e.ErrorCode, desc, e.Message)
+			msg = fmt.Sprintf("%s (%s): %s", e.ErrorCode, desc, e.Message)
+		} else {
+			msg = fmt.Sprintf("%s: %s", e.ErrorCode, e.Message)
 		}
-		return fmt.Sprintf("BoA error %s: %s", e.ErrorCode, e.Message)
 	}
-	return fmt.Sprintf("BoA error: %s", e.Message)
+	if e.Detail != "" {
+		return fmt.Sprintf("BoA error: %s - Detail: %s", msg, e.Detail)
+	}
+	return fmt.Sprintf("BoA error: %s", msg)
 }
 
 // ─── Signature Verification Error ───────────────────────────────────────────────

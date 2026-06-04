@@ -112,8 +112,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             data.banks.forEach(bank => {
                 const opt = document.createElement('option');
-                opt.value = bank.bankId;
-                opt.textContent = bank.bankName;
+                opt.value = bank.id;
+                opt.textContent = bank.institutionName;
                 bankId.appendChild(opt);
             });
         } catch (err) {
