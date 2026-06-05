@@ -249,6 +249,7 @@ func (c *Client) FetchNameMpesa(phoneNumber string) (*domain.BoANameCheckRespons
 // TransferWithin initiates a transfer within Bank of Abyssinia.
 func (c *Client) TransferWithin(req *domain.BoATransferWithinRequest) (*domain.BoAAPIResponse, error) {
 	req.ClientID = c.clientID
+	log.Printf("DEBUG: BoA transfer within request: %v", req)
 
 	body, err := c.doPost("/transferWithin", req)
 	if err != nil {
@@ -354,7 +355,7 @@ func (c *Client) GetExchangeRate(baseCurrency string) (*domain.BoAAPIResponse, e
 	if err != nil {
 		return nil, fmt.Errorf("boa exchange rate: %w", err)
 	}
-
+	log.Printf("exchange error %v", err)
 	var resp struct {
 		Header domain.BoAResponseHeader `json:"Header"`
 		Body   []domain.BoACurrencyRate `json:"Body"`
@@ -370,7 +371,7 @@ func (c *Client) GetExchangeRate(baseCurrency string) (*domain.BoAAPIResponse, e
 	// Map old API response format to new internal representation for compatibility
 	rateStr := resp.Body[0].BuyRate
 	rate, _ := strconv.ParseFloat(rateStr, 64)
-
+	fmt.Println("rate", rate)
 	return &domain.BoAAPIResponse{
 		Header: resp.Header,
 		Body: map[string]any{
@@ -417,9 +418,6 @@ func (c *Client) doGet(path string) ([]byte, error) {
 	req.Header.Set("Authorization", token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)
-
-	log.Printf("DEBUG: BoA GET %s", path)
-	log.Printf("URL: %s", reqURL)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -478,8 +476,6 @@ func (c *Client) doPost(path string, payload any) ([]byte, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)
-
-	log.Printf("DEBUG: BoA POST %s", path)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
