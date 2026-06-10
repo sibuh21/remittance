@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"fmt"
+	"log"
 	"net/http"
+	"strings"
 
 	"remittance-service/internal/domain"
 
@@ -83,4 +86,59 @@ func (h *collectionHandler) ValidateAndAuthorize(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, resp)
+}
+
+func (h *collectionHandler) ReviewPayment(c echo.Context) error {
+	var req struct {
+		RemittanceID string `json:"remittance_id"`
+		Approve      bool   `json:"approve"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"message": "invalid request"})
+	}
+
+	if req.RemittanceID == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"message": "remittance_id is required"})
+	}
+
+	err := h.collectionSvc.ReviewPayment(req.RemittanceID, req.Approve)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"message": err.Error()})
+	}
+
+	status := "approved"
+	if !req.Approve {
+		status = "rejected"
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{
+		"message":       fmt.Sprintf("Remittance %s has been %s", req.RemittanceID, status),
+		"remittance_id": req.RemittanceID,
+		"status":        status,
+	})
+}
+
+func (h *collectionHandler) HandleWebhook(c echo.Context) error {
+	var n domain.CyberSourceNotification
+
+	// CyberSource can send as JSON or Form (URL Encoded)
+	if strings.Contains(c.Request().Header.Get("Content-Type"), "application/json") {
+		if err := c.Bind(&n); err != nil {
+			return c.JSON(http.StatusBadRequest, echo.Map{"message": "invalid json"})
+		}
+	} else {
+		// Try binding as Form
+		n.MerchantReferenceCode = c.FormValue("merchant_reference_code")
+		n.Decision = c.FormValue("decision")
+		n.RequestID = c.FormValue("request_id")
+		n.ReasonCode = c.FormValue("reason_code")
+	}
+
+	err := h.collectionSvc.ProcessWebhook(&n)
+	if err != nil {
+		log.Printf("ERROR: Webhook processing failed: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"message": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{"status": "received"})
 }

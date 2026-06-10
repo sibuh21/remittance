@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -85,19 +86,19 @@ func (c *Client) Authenticate() error {
 
 	log.Printf("INFO: Requesting new BoA access token...")
 
-	data := map[string]string{
+	authReq := map[string]string{
 		"client_id":     c.clientID,
 		"client_secret": c.clientSecret,
-		"grant_type":    "refresh_token",
 		"refresh_token": c.refreshToken,
+		"grant_type":    "refresh_token",
 	}
 
-	jsonData, err := json.Marshal(data)
+	jsonData, err := json.Marshal(authReq)
 	if err != nil {
 		return fmt.Errorf("boa auth: failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, c.tokenURL+"/token", bytes.NewReader(jsonData))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(c.tokenURL, "/")+"/token", bytes.NewReader(jsonData))
 	if err != nil {
 		return fmt.Errorf("boa auth: failed to create request: %w", err)
 	}
@@ -170,45 +171,48 @@ func (c *Client) FetchAccountName(accountID string) (*domain.BoAAccountInfo, err
 	}
 
 	var resp struct {
-		Header domain.BoAResponseHeader `json:"Header"`
-		Body   domain.BoAAccountInfo    `json:"Body"`
+		Header domain.BoAResponseHeader `json:"header"`
+		Body   []domain.BoAAccountInfo  `json:"body"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("boa fetch name: parse error: %w", err)
 	}
 
-	return &resp.Body, nil
+	if strings.ToLower(resp.Header.Status) != "success" || len(resp.Body) == 0 {
+		return nil, fmt.Errorf("boa fetch name: account not found or error status: %s", resp.Header.Status)
+	}
+
+	return &resp.Body[0], nil
 }
 
 // FetchAccountNameOtherBank validates an account at another bank.
 func (c *Client) FetchAccountNameOtherBank(bankID, accountID string) (*domain.BoAAccountInfo, error) {
-	path := fmt.Sprintf("/getAccount/%s/%s", bankID, accountID)
+	path := fmt.Sprintf("/otherBank/getAccount/%s/%s", bankID, accountID)
 	body, err := c.doGet(path)
 	if err != nil {
 		return nil, fmt.Errorf("boa fetch name other bank: %w", err)
 	}
 
 	var resp struct {
-		Header domain.BoAResponseHeader `json:"Header"`
-		Body   domain.BoAAccountInfo    `json:"Body"`
+		Header domain.BoAResponseHeader `json:"header"`
+		Body   []domain.BoAAccountInfo  `json:"body"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("boa fetch name other bank: parse error: %w", err)
 	}
 
-	if resp.Body.EnquiryStatus == 0 {
+	if strings.ToLower(resp.Header.Status) != "success" || len(resp.Body) == 0 {
 		return nil, &domain.BoAError{
-			ErrorCode: resp.Body.ErrorCode,
-			Message:   "account validation failed",
+			Message: "account validation failed or error status",
 		}
 	}
 
-	return &resp.Body, nil
+	return &resp.Body[0], nil
 }
 
 // FetchNameTelebirr validates a Telebirr wallet.
 func (c *Client) FetchNameTelebirr(phoneNumber string) (*domain.BoANameCheckResponse, error) {
-	path := fmt.Sprintf("/getName/telebirr/%s", phoneNumber)
+	path := fmt.Sprintf("/wallet/getName/TELEBIRR/%s", phoneNumber)
 	body, err := c.doGet(path)
 	if err != nil {
 		return nil, fmt.Errorf("boa fetch telebirr name: %w", err)
@@ -224,7 +228,7 @@ func (c *Client) FetchNameTelebirr(phoneNumber string) (*domain.BoANameCheckResp
 
 // FetchNameMpesa validates an Mpesa wallet.
 func (c *Client) FetchNameMpesa(phoneNumber string) (*domain.BoANameCheckResponse, error) {
-	path := fmt.Sprintf("/getName/mpesa/%s", phoneNumber)
+	path := fmt.Sprintf("/wallet/getName/MPESA/%s", phoneNumber)
 	body, err := c.doGet(path)
 	if err != nil {
 		return nil, fmt.Errorf("boa fetch mpesa name: %w", err)
@@ -245,6 +249,7 @@ func (c *Client) FetchNameMpesa(phoneNumber string) (*domain.BoANameCheckRespons
 // TransferWithin initiates a transfer within Bank of Abyssinia.
 func (c *Client) TransferWithin(req *domain.BoATransferWithinRequest) (*domain.BoAAPIResponse, error) {
 	req.ClientID = c.clientID
+	log.Printf("DEBUG: BoA transfer within request: %v", req)
 
 	body, err := c.doPost("/transferWithin", req)
 	if err != nil {
@@ -286,7 +291,8 @@ func (c *Client) TransferOtherBank(req *domain.BoAOtherBankTransferRequest) (*do
 func (c *Client) TransferWallet(req *domain.BoAWalletTransferRequest) (*domain.BoAAPIResponse, error) {
 	req.ClientID = c.clientID
 
-	body, err := c.doPost("/transferMobile", req)
+	// Using the /moneySend endpoint as requested
+	body, err := c.doPost("/moneySend", req)
 	if err != nil {
 		return nil, fmt.Errorf("boa wallet transfer: %w", err)
 	}
@@ -314,8 +320,8 @@ func (c *Client) GetBankIDs() ([]domain.BoABankInfo, error) {
 	}
 
 	var resp struct {
-		Header domain.BoAResponseHeader `json:"Header"`
-		Body   []domain.BoABankInfo     `json:"Body"`
+		Header domain.BoAResponseHeader `json:"header"`
+		Body   []domain.BoABankInfo     `json:"body"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("boa get bank ids: parse error: %w", err)
@@ -328,7 +334,7 @@ func (c *Client) GetBankIDs() ([]domain.BoABankInfo, error) {
 func (c *Client) GetTransactionStatus(transactionID string) (*domain.BoAAPIResponse, error) {
 	path := fmt.Sprintf("/transactionStatus/%s", transactionID)
 
-	body, err := c.doPost(path, nil)
+	body, err := c.doGet(path)
 	if err != nil {
 		return nil, fmt.Errorf("boa transaction status: %w", err)
 	}
@@ -345,24 +351,41 @@ func (c *Client) GetTransactionStatus(transactionID string) (*domain.BoAAPIRespo
 func (c *Client) GetExchangeRate(baseCurrency string) (*domain.BoAAPIResponse, error) {
 	path := fmt.Sprintf("/rate/%s", baseCurrency)
 
-	body, err := c.doPost(path, map[string]string{"baseCurrency": baseCurrency})
+	body, err := c.doGet(path)
 	if err != nil {
 		return nil, fmt.Errorf("boa exchange rate: %w", err)
 	}
-
-	var resp domain.BoAAPIResponse
+	log.Printf("exchange error %v", err)
+	var resp struct {
+		Header domain.BoAResponseHeader `json:"Header"`
+		Body   []domain.BoACurrencyRate `json:"Body"`
+	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("boa exchange rate: parse error: %w", err)
 	}
 
-	return &resp, nil
+	if len(resp.Body) == 0 {
+		return nil, fmt.Errorf("boa exchange rate: no rate returned")
+	}
+
+	// Map old API response format to new internal representation for compatibility
+	rateStr := resp.Body[0].BuyRate
+	rate, _ := strconv.ParseFloat(rateStr, 64)
+	fmt.Println("rate", rate)
+	return &domain.BoAAPIResponse{
+		Header: resp.Header,
+		Body: map[string]any{
+			"rate":         rate,
+			"buyRate":      resp.Body[0].BuyRate,
+			"sellRate":     resp.Body[0].SellRate,
+			"currencyCode": resp.Body[0].CurrencyCode,
+		},
+	}, nil
 }
 
 // GetBalance retrieves the settlement account balance.
 func (c *Client) GetBalance() (*domain.BoAAPIResponse, error) {
-	reqBody := map[string]string{"Client_id": c.clientID}
-
-	body, err := c.doPost("/getBalance", reqBody)
+	body, err := c.doGet("/getBalance")
 	if err != nil {
 		return nil, fmt.Errorf("boa get balance: %w", err)
 	}
@@ -392,10 +415,9 @@ func (c *Client) doGet(path string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", token)
 	req.Header.Set("Accept", "application/json")
-
-	log.Printf("DEBUG: BoA GET %s", path)
+	req.Header.Set("x-api-key", c.apiKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -450,12 +472,10 @@ func (c *Client) doPost(path string, payload any) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)
-
-	log.Printf("DEBUG: BoA POST %s", path)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

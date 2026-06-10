@@ -46,31 +46,53 @@ func main() {
 	}
 
 	// ─── Initialize Bank of Abyssinia Client (Outbound Payout) ──────────────
-	boaClient, err := boa.NewClient(
-		cfg.BoA.BaseURL,
-		cfg.BoA.TokenURL,
-		cfg.BoA.ClientID,
-		cfg.BoA.ClientSecret,
-		cfg.BoA.RefreshToken,
-		cfg.BoA.APIKey,
-		func(newToken string) {
-			// Persist the rotated refresh token back to config.yaml
-			viper.Set("boa.refresh_token", newToken)
-			if err := viper.WriteConfig(); err != nil {
-				log.Printf("ERROR: Failed to save rotated BoA refresh token to file: %v", err)
-			} else {
-				log.Printf("INFO: BoA refresh token rotated and saved to config file")
-			}
-		},
-	)
-	if err != nil {
-		log.Fatalf("Failed to create BoA client: %v", err)
+	var boaClient domain.BoAClient
+	if cfg.BoA.MockMode {
+		log.Printf("INFO: Using MOCK Bank of Abyssinia client")
+		boaClient = boa.NewMockClient()
+	} else {
+		log.Printf("INFO: Using REAL Bank of Abyssinia client (BaseURL: %s)", cfg.BoA.BaseURL)
+		var err error
+		boaClient, err = boa.NewClient(
+			cfg.BoA.BaseURL,
+			cfg.BoA.TokenURL,
+			cfg.BoA.ClientID,
+			cfg.BoA.ClientSecret,
+			cfg.BoA.RefreshToken,
+			cfg.BoA.APIKey,
+			func(newToken string) {
+				// Persist the rotated refresh token back to config.yaml
+				viper.Set("boa.refresh_token", newToken)
+				if err := viper.WriteConfig(); err != nil {
+					log.Printf("ERROR: Failed to save rotated BoA refresh token to file: %v", err)
+				} else {
+					log.Printf("INFO: BoA refresh token rotated and saved to config file")
+				}
+			},
+		)
+		if err != nil {
+			log.Fatalf("Failed to create BoA client: %v", err)
+		}
 	}
 
 	// ─── Initialize Services ────────────────────────────────────────────────
-	collectionSvc := service.NewCollectionService(csRESTClient, db, cfg.CyberSource.ReturnURL)
 	payoutSvc := service.NewPayoutService(boaClient)
-	remittanceSvc := service.NewRemittanceService(collectionSvc, payoutSvc, db, cfg.CyberSource.TargetOrigins)
+
+	// We use a pointer or a variable to avoid circular dependency during initialization
+	var remittanceSvc domain.RemittanceService
+
+	onCollected := func(remittanceID string) {
+		log.Printf("INFO: Automatic payout triggered for remittance %s", remittanceID)
+		go func() {
+			_, err := remittanceSvc.ExecutePayout(remittanceID)
+			if err != nil {
+				log.Printf("ERROR: Automatic payout failed for %s: %v", remittanceID, err)
+			}
+		}()
+	}
+
+	collectionSvc := service.NewCollectionService(csRESTClient, db, cfg.CyberSource.ReturnURL, onCollected)
+	remittanceSvc = service.NewRemittanceService(collectionSvc, payoutSvc, db, cfg.CyberSource.TargetOrigins)
 
 	// ─── Initialize Handlers ────────────────────────────────────────────────
 	collectionHandler := handler.NewCollectionHandler(collectionSvc)
@@ -117,6 +139,8 @@ func main() {
 	api.POST("/collection/pa-setup", collectionHandler.SetupPayerAuth)
 	api.POST("/collection/authorize", collectionHandler.AuthorizePayment)
 	api.POST("/collection/validate", collectionHandler.ValidateAndAuthorize)
+	api.POST("/collection/review", collectionHandler.ReviewPayment)
+	api.POST("/collection/webhook", collectionHandler.HandleWebhook)
 	
 	// 3DS Return Handler (Step 7 callback)
 	api.POST("/collection/return", func(c echo.Context) error {

@@ -52,6 +52,7 @@ type Config struct {
 		ClientSecret string `mapstructure:"client_secret"`
 		RefreshToken string `mapstructure:"refresh_token"`
 		APIKey       string `mapstructure:"api_key"`
+		MockMode     bool   `mapstructure:"mock_mode"`
 	} `mapstructure:"boa"`
 
 	CORS struct {
@@ -71,22 +72,22 @@ type CheckoutRequest struct {
 	PaymentMethod string `json:"payment_method"`
 
 	// Remittance enrichment
-	SenderName         string `json:"sender_name"`
-	SenderEmail        string `json:"sender_email"`
-	SenderAddress      string `json:"sender_address"`
-	SenderCity         string `json:"sender_city"`
-	SenderState        string `json:"sender_state"`
-	SenderPostal       string `json:"sender_postal"`
-	SenderCountry      string `json:"sender_country"`
-	ReceiverName       string `json:"receiver_name"`
-	ReceiverAddress    string `json:"receiver_address"`
-	ReceiverCity       string `json:"receiver_city"`
-	ReceiverCountry    string `json:"receiver_country"`
-	ReceiverPhone      string `json:"receiver_phone"`
-	PayoutType         string `json:"payout_type"`      // WITHIN_BOA, OTHER_BANK, TELEBIRR, MPESA
-	AccountNumber      string `json:"account_number"`    // for bank transfers
-	BankID             string `json:"bank_id"`           // for other bank transfers
-	TargetCurrency     string `json:"target_currency"`   // e.g. "ETB"
+	SenderName      string `json:"sender_name"`
+	SenderEmail     string `json:"sender_email"`
+	SenderAddress   string `json:"sender_address"`
+	SenderCity      string `json:"sender_city"`
+	SenderState     string `json:"sender_state"`
+	SenderPostal    string `json:"sender_postal"`
+	SenderCountry   string `json:"sender_country"`
+	ReceiverName    string `json:"receiver_name"`
+	ReceiverAddress string `json:"receiver_address"`
+	ReceiverCity    string `json:"receiver_city"`
+	ReceiverCountry string `json:"receiver_country"`
+	ReceiverPhone   string `json:"receiver_phone"`
+	PayoutType      string `json:"payout_type"`     // WITHIN_BOA, OTHER_BANK, TELEBIRR, MPESA
+	AccountNumber   string `json:"account_number"`  // for bank transfers
+	BankID          string `json:"bank_id"`         // for other bank transfers
+	TargetCurrency  string `json:"target_currency"` // e.g. "ETB"
 }
 
 func (r CheckoutRequest) Validate() error {
@@ -113,8 +114,6 @@ func (r CheckoutRequest) Validate() error {
 	)
 }
 
-
-
 // PaymentResult is the response after processing a CyberSource webhook.
 type PaymentResult struct {
 	ID              string        `json:"id"`
@@ -126,6 +125,14 @@ type PaymentResult struct {
 	RemittanceID    string        `json:"remittance_id,omitempty"`
 	Message         string        `json:"message,omitempty"`
 	ProcessedAt     time.Time     `json:"processed_at"`
+}
+
+// CyberSourceNotification represents the automated callback from CyberSource Decision Manager.
+type CyberSourceNotification struct {
+	MerchantReferenceCode string `json:"merchant_reference_code" form:"merchant_reference_code"`
+	Decision              string `json:"decision" form:"decision"`
+	RequestID             string `json:"request_id" form:"request_id"`
+	ReasonCode            string `json:"reason_code" form:"reason_code"`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -222,7 +229,7 @@ type RemittanceParty struct {
 	Address            string `json:"address"`
 	City               string `json:"city"`
 	AdministrativeArea string `json:"administrative_area,omitempty"` // State/Province (e.g. "NY")
-	Country            string `json:"country"` // Full name or code, will be converted in backend
+	Country            string `json:"country"`                       // Full name or code, will be converted in backend
 	PostalCode         string `json:"postal_code"`
 	Phone              string `json:"phone,omitempty"`
 	IDNumber           string `json:"id_number,omitempty"`
@@ -254,8 +261,8 @@ type BoATokenResponse struct {
 
 // BoAAPIResponse is the generic wrapper for BoA API responses.
 type BoAAPIResponse struct {
-	Header BoAResponseHeader `json:"Header"`
-	Body   map[string]any    `json:"Body"`
+	Header BoAResponseHeader `json:"header"`
+	Body   map[string]any    `json:"body"`
 }
 
 // BoAResponseHeader holds the header part of BoA responses.
@@ -266,10 +273,8 @@ type BoAResponseHeader struct {
 
 // BoAAccountInfo is returned by getAccount APIs.
 type BoAAccountInfo struct {
-	AccountHolderName string `json:"accountHolderName"`
-	CurrencyCode      string `json:"currencyCode"`
-	EnquiryStatus     int    `json:"enquiryStatus"` // 0 = failure, 1 = success
-	ErrorCode         string `json:"errorCode,omitempty"`
+	CustomerName    string `json:"customerName"`
+	AccountCurrency string `json:"accountCurrency"`
 }
 
 // BoATransferWithinRequest is the request body for within-BoA transfers.
@@ -282,37 +287,43 @@ type BoATransferWithinRequest struct {
 
 // BoAOtherBankTransferRequest is the request body for other-bank transfers via EthSwitch.
 type BoAOtherBankTransferRequest struct {
-	ClientID      string `json:"client_id"`
-	Amount        string `json:"amount"`
-	Reference     string `json:"reference"`
-	BankID        string `json:"bankId"`
-	AccountNumber string `json:"accountNumber"`
-	ReceiverName  string `json:"receiverName"`
+	ClientID       string `json:"client_id"`
+	Amount         string `json:"amount"`
+	Reference      string `json:"reference"`
+	BankCode       string `json:"bankCode"`
+	AccountNumber  string `json:"accountNumber"`
+	ReceiverName   string `json:"receiverName"`
+	CreditCurrency string `json:"creditCurrency"`
+	DebitCurrency  string `json:"debitCurrency"`
 }
 
-// BoAWalletTransferRequest is the request body for Telebirr/Mpesa transfers.
+// BoAWalletTransferRequest is the request body for Telebirr/Mpesa or MoneySend transfers.
 type BoAWalletTransferRequest struct {
-	ClientID         string `json:"client_id"`
-	Amount           string `json:"amount"`
-	PhoneNumber      string `json:"phoneNumber"`
-	MMProvider       string `json:"mmProvider"` // TELEBIRR, MPESA
-	Reference        string `json:"reference"`
-	ReceiverName     string `json:"receiverName"`
-	OrderingCustomer string `json:"orderingCustomer"`
-	SenderPhone      string `json:"senderPhone"`
+	ClientID            string `json:"client_id"`
+	Amount              string `json:"amount"`
+	RemitterName        string `json:"remitterName"`
+	RemitterPhonenumber string `json:"remitterPhonenumber"`
+	ReceiverName        string `json:"receiverName"`
+	ReceiverAddress     string `json:"receiverAddress"`
+	BeneficiaryTel      string `json:"beneficiaryTel"`
+	Reference           string `json:"reference"`
+	DebitCurrency       string `json:"debitCurrency"`
+	CreditCurrency      string `json:"creditCurrency"`
+	MMProvider          string `json:"mmProvider,omitempty"` // Added for internal logic
 }
 
 // BoABankInfo holds bank information from the getBankId API.
 type BoABankInfo struct {
-	BankID   string `json:"bankId"`
-	BankName string `json:"bankName"`
+	BankID   string `json:"id"`
+	BankName string `json:"institutionName"`
 }
 
 // BoACurrencyRate holds exchange rate information.
 type BoACurrencyRate struct {
-	BaseCurrency   string  `json:"baseCurrency"`
-	TargetCurrency string  `json:"targetCurrency"`
-	Rate           float64 `json:"rate"`
+	CurrencyCode string `json:"currencyCode"`
+	CurrencyName string `json:"currencyName"`
+	BuyRate      string `json:"buyRate"`
+	SellRate     string `json:"sellRate"`
 }
 
 // BoABalanceResponse holds account balance response.
@@ -334,14 +345,14 @@ type BoANameCheckResponse struct {
 // RemittanceRequest is the full end-to-end remittance initiation request.
 type RemittanceRequest struct {
 	// Sender
-	SenderName         string `json:"sender_name" validate:"required"`
-	SenderEmail        string `json:"sender_email"`
-	SenderAddress      string `json:"sender_address"`
-	SenderCity         string `json:"sender_city"`
-	SenderState        string `json:"sender_state"`
-	SenderPostal       string `json:"sender_postal"`
-	SenderCountry      string `json:"sender_country"`
-	SenderPhone        string `json:"sender_phone"`
+	SenderName    string `json:"sender_name" validate:"required"`
+	SenderEmail   string `json:"sender_email"`
+	SenderAddress string `json:"sender_address"`
+	SenderCity    string `json:"sender_city"`
+	SenderState   string `json:"sender_state"`
+	SenderPostal  string `json:"sender_postal"`
+	SenderCountry string `json:"sender_country"`
+	SenderPhone   string `json:"sender_phone"`
 
 	// Amount
 	SendAmount     string `json:"send_amount" validate:"required"`
@@ -349,16 +360,16 @@ type RemittanceRequest struct {
 	TargetCurrency string `json:"target_currency"` // defaults to ETB
 
 	// Receiver
-	ReceiverName        string `json:"receiver_name" validate:"required"`
-	ReceiverPhone       string `json:"receiver_phone"`
-	ReceiverAddress     string `json:"receiver_address"`
-	ReceiverCity        string `json:"receiver_city"`
-	ReceiverCountry     string `json:"receiver_country"`
+	ReceiverName    string `json:"receiver_name" validate:"required"`
+	ReceiverPhone   string `json:"receiver_phone"`
+	ReceiverAddress string `json:"receiver_address"`
+	ReceiverCity    string `json:"receiver_city"`
+	ReceiverCountry string `json:"receiver_country"`
 
 	// Payout
 	PayoutType    PayoutType `json:"payout_type" validate:"required"` // WITHIN_BOA, OTHER_BANK, TELEBIRR, MPESA
-	AccountNumber string     `json:"account_number"`                   // for bank transfers
-	BankID        string     `json:"bank_id"`                          // for other bank transfers
+	AccountNumber string     `json:"account_number"`                  // for bank transfers
+	BankID        string     `json:"bank_id"`                         // for other bank transfers
 }
 
 // ManualPayoutRequest is used for manual payout triggers.
@@ -398,22 +409,22 @@ type RemittanceResponse struct {
 
 // PayoutResult is the result of an outbound payout via BoA.
 type PayoutResult struct {
-	PayoutID       string        `json:"payout_id"`
-	Status         string        `json:"status"`
-	BoAReference   string        `json:"boa_reference,omitempty"`
-	Amount         string        `json:"amount"`
-	Currency       string        `json:"currency"`
-	ReceiverName   string        `json:"receiver_name"`
-	PayoutType     PayoutType    `json:"payout_type"`
-	Message        string        `json:"message,omitempty"`
-	ProcessedAt    time.Time     `json:"processed_at"`
+	PayoutID     string     `json:"payout_id"`
+	Status       string     `json:"status"`
+	BoAReference string     `json:"boa_reference,omitempty"`
+	Amount       string     `json:"amount"`
+	Currency     string     `json:"currency"`
+	ReceiverName string     `json:"receiver_name"`
+	PayoutType   PayoutType `json:"payout_type"`
+	Message      string     `json:"message,omitempty"`
+	ProcessedAt  time.Time  `json:"processed_at"`
 }
 
 // ExchangeRateResponse is returned for exchange rate queries.
 type ExchangeRateResponse struct {
-	BaseCurrency   string  `json:"base_currency"`
-	TargetCurrency string  `json:"target_currency"`
-	Rate           float64 `json:"rate"`
+	BaseCurrency   string    `json:"base_currency"`
+	TargetCurrency string    `json:"target_currency"`
+	Rate           float64   `json:"rate"`
 	Timestamp      time.Time `json:"timestamp"`
 }
 
@@ -427,8 +438,8 @@ type BeneficiaryCheckResponse struct {
 
 // TransactionStatusResponse wraps BoA transaction status check results.
 type TransactionStatusResponse struct {
-	TransactionID string `json:"transaction_id"`
-	Status        string `json:"status"`
+	TransactionID string         `json:"transaction_id"`
+	Status        string         `json:"status"`
 	Detail        map[string]any `json:"detail,omitempty"`
 }
 
@@ -438,34 +449,34 @@ type TransactionStatusResponse struct {
 
 // Transaction represents a full record of a remittance for database storage.
 type Transaction struct {
-	ID                 string           `json:"id"`
-	RemittanceID       string           `json:"remittance_id"`
-	Status             RemittanceStatus `json:"status"`
+	ID           string           `json:"id"`
+	RemittanceID string           `json:"remittance_id"`
+	Status       RemittanceStatus `json:"status"`
 
 	// Inbound (Card Collection)
-	SenderName         string           `json:"sender_name"`
-	SenderEmail        string           `json:"sender_email"`
-	SourceAmount       string           `json:"source_amount"`
-	SourceCurrency     string           `json:"source_currency"`
-	CybersourceRef     string           `json:"cybersource_ref,omitempty"`
-	CollectionStatus   string           `json:"collection_status,omitempty"`
+	SenderName       string `json:"sender_name"`
+	SenderEmail      string `json:"sender_email"`
+	SourceAmount     string `json:"source_amount"`
+	SourceCurrency   string `json:"source_currency"`
+	CybersourceRef   string `json:"cybersource_ref,omitempty"`
+	CollectionStatus string `json:"collection_status,omitempty"`
 
 	// Conversion
-	ExchangeRate       float64          `json:"exchange_rate"`
-	TargetAmount       string           `json:"target_amount"`
-	TargetCurrency     string           `json:"target_currency"`
+	ExchangeRate   float64 `json:"exchange_rate"`
+	TargetAmount   string  `json:"target_amount"`
+	TargetCurrency string  `json:"target_currency"`
 
 	// Outbound (Bank Payout)
-	ReceiverName       string           `json:"receiver_name"`
-	ReceiverPhone      string           `json:"receiver_phone,omitempty"`
-	PayoutType         PayoutType       `json:"payout_type"`
-	AccountNumber      string           `json:"account_number,omitempty"`
-	BankID             string           `json:"bank_id,omitempty"`
-	BoAReference       string           `json:"boa_reference,omitempty"`
-	PayoutStatus       string           `json:"payout_status,omitempty"`
+	ReceiverName  string     `json:"receiver_name"`
+	ReceiverPhone string     `json:"receiver_phone,omitempty"`
+	PayoutType    PayoutType `json:"payout_type"`
+	AccountNumber string     `json:"account_number,omitempty"`
+	BankID        string     `json:"bank_id,omitempty"`
+	BoAReference  string     `json:"boa_reference,omitempty"`
+	PayoutStatus  string     `json:"payout_status,omitempty"`
 
-	CreatedAt          time.Time        `json:"created_at"`
-	UpdatedAt          time.Time        `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -479,6 +490,23 @@ type CollectionService interface {
 	SetupPASetup(req *PASetupRequest) (*PASetupResponse, error)
 	AuthorizePayment(req *AuthorizeRequest) (*AuthorizeResponse, error)
 	ValidateAndAuthorize(req *ValidateRequest) (*AuthorizeResponse, error)
+	ReviewPayment(remittanceID string, approve bool) error
+	ProcessWebhook(notification *CyberSourceNotification) error
+}
+
+// BoAClient defines the interface for interacting with Bank of Abyssinia APIs.
+type BoAClient interface {
+	FetchAccountName(accountID string) (*BoAAccountInfo, error)
+	FetchAccountNameOtherBank(bankID, accountID string) (*BoAAccountInfo, error)
+	FetchNameTelebirr(phoneNumber string) (*BoANameCheckResponse, error)
+	FetchNameMpesa(phoneNumber string) (*BoANameCheckResponse, error)
+	TransferWithin(req *BoATransferWithinRequest) (*BoAAPIResponse, error)
+	TransferOtherBank(req *BoAOtherBankTransferRequest) (*BoAAPIResponse, error)
+	TransferWallet(req *BoAWalletTransferRequest) (*BoAAPIResponse, error)
+	GetBankIDs() ([]BoABankInfo, error)
+	GetTransactionStatus(transactionID string) (*BoAAPIResponse, error)
+	GetExchangeRate(baseCurrency string) (*BoAAPIResponse, error)
+	GetBalance() (*BoAAPIResponse, error)
 }
 
 // PayoutService handles outbound disbursement via Bank of Abyssinia.
@@ -486,7 +514,7 @@ type PayoutService interface {
 	ValidateBeneficiary(payoutType PayoutType, accountOrPhone, bankID string) (*BeneficiaryCheckResponse, error)
 	TransferWithinBoA(amount, accountNumber, reference string) (*PayoutResult, error)
 	TransferOtherBank(amount, bankID, accountNumber, receiverName, reference string) (*PayoutResult, error)
-	TransferWallet(amount, phoneNumber, provider, receiverName, senderName, senderPhone, reference string) (*PayoutResult, error)
+	TransferWallet(amount, receiverPhoneNumber, provider, receiverName, senderName, senderPhoneNumber, reference string) (*PayoutResult, error)
 	CheckTransactionStatus(transactionID string) (*TransactionStatusResponse, error)
 	GetExchangeRate(baseCurrency string) (*ExchangeRateResponse, error)
 	GetBalance() (*BoABalanceResponse, error)
@@ -510,6 +538,8 @@ type CollectionHandler interface {
 	SetupPayerAuth(c echo.Context) error
 	AuthorizePayment(c echo.Context) error
 	ValidateAndAuthorize(c echo.Context) error
+	ReviewPayment(c echo.Context) error
+	HandleWebhook(c echo.Context) error
 }
 
 // PayoutHandler handles Bank of Abyssinia payout HTTP endpoints.
