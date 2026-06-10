@@ -94,11 +94,14 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 
 	// Update DB based on status
 	switch domainResp.Status {
-	case domain.CSStatusAuthorized, domain.CSStatusAuthorizedPendingReview:
+	case domain.CSStatusAuthorized:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollected))
 		if s.onCollected != nil {
 			s.onCollected(req.RemittanceID)
 		}
+	case domain.CSStatusAuthorizedPendingReview:
+		log.Printf("INFO: Remittance %s flagged for manual review", req.RemittanceID)
+		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceReviewPending))
 	case domain.CSStatusPendingAuth:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollectionPending))
 	default:
@@ -133,11 +136,14 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 	}
 
 	switch domainResp.Status {
-	case domain.CSStatusAuthorized, domain.CSStatusAuthorizedPendingReview:
+	case domain.CSStatusAuthorized:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollected))
 		if s.onCollected != nil {
 			s.onCollected(req.RemittanceID)
 		}
+	case domain.CSStatusAuthorizedPendingReview:
+		log.Printf("INFO: Remittance %s flagged for manual review (post-3DS)", req.RemittanceID)
+		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceReviewPending))
 	default:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceFailed))
 	}
@@ -147,6 +153,38 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 
 // buildPaymentRequest constructs the CyberSource AFT payment request from domain data.
 // All dynamic values (country, address, state) come from the request — nothing is hardcoded.
+func (s *collectionService) ReviewPayment(remittanceID string, approve bool) error {
+	log.Printf("INFO: Manual review update for remittance %s - Approved: %v", remittanceID, approve)
+
+	if !approve {
+		return s.db.UpdateCollectionResult(remittanceID, "", "REVIEW_REJECTED", string(domain.RemittanceFailed))
+	}
+
+	// Update to COLLECTED
+	err := s.db.UpdateCollectionResult(remittanceID, "", "REVIEW_APPROVED", string(domain.RemittanceCollected))
+	if err != nil {
+		return err
+	}
+
+	// Trigger automatic payout
+	if s.onCollected != nil {
+		go s.onCollected(remittanceID)
+	}
+
+	return nil
+}
+
+func (s *collectionService) ProcessWebhook(n *domain.CyberSourceNotification) error {
+	log.Printf("INFO: Received CyberSource Webhook - Ref: %s, Decision: %s", n.MerchantReferenceCode, n.Decision)
+
+	if n.MerchantReferenceCode == "" {
+		return fmt.Errorf("missing merchant_reference_code in webhook")
+	}
+
+	approve := strings.ToUpper(n.Decision) == "ACCEPT"
+	return s.ReviewPayment(n.MerchantReferenceCode, approve)
+}
+
 func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, actionList []string) *cybersource.PaymentRequest {
 	senderAlpha2, senderAlpha3 := domain.GetCountryCodes(req.Sender.Country)
 	_, recipientAlpha3 := domain.GetCountryCodes(req.Recipient.Country)

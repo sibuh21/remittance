@@ -160,26 +160,26 @@ func (s *payoutService) TransferOtherBank(amount, bankID, accountNumber, receive
 }
 
 // TransferWallet initiates a real fund transfer to Telebirr or Mpesa wallet.
-func (s *payoutService) TransferWallet(amount, phoneNumber, provider, receiverName, senderName, senderPhone, reference string) (*domain.PayoutResult, error) {
-	log.Printf("INFO: BoA wallet transfer - Provider: %s, Amount: %s, Phone: %s, Ref: %s", provider, amount, phoneNumber, reference)
+func (s *payoutService) TransferWallet(amount, receiverPhoneNumber, provider, receiverName, senderName, senderPhoneNumber, reference string) (*domain.PayoutResult, error) {
+	log.Printf("INFO: BoA wallet transfer - Provider: %s, Amount: %s, Phone: %s, Ref: %s", provider, amount, receiverPhoneNumber, reference)
 
 	// Shorten reference for BoA (often limited to 16 chars in T24)
 	boaRef := reference
 	if len(boaRef) > 15 {
 		boaRef = boaRef[:15]
 	}
-
+	// some american phone number
+	// senderPhoneNumber = "18884521505"
 	req := &domain.BoAWalletTransferRequest{
 		Amount:              amount,
-		ReceiverPhonenumber: phoneNumber,
+		BeneficiaryTel:      receiverPhoneNumber,
 		MMProvider:          provider,
 		Reference:           boaRef,
 		ReceiverName:        receiverName,
 		RemitterName:        senderName,
-		RemitterPhonenumber: senderPhone,
-		SecretCode:          "123456",
+		RemitterPhonenumber: receiverPhoneNumber,
 	}
-
+	log.Println("wallet transer request body:===>", req)
 	resp, err := s.boaClient.TransferWallet(req)
 	if err != nil {
 		return nil, fmt.Errorf("BoA wallet transfer failed: %w", err)

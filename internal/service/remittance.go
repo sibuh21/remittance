@@ -182,7 +182,7 @@ func (s *remittanceService) ExecutePayout(remittanceID string) (*domain.PayoutRe
 		payoutResult, payoutErr = s.payoutSvc.TransferOtherBank(txn.TargetAmount, txn.BankID, txn.AccountNumber, txn.ReceiverName, remittanceID)
 	case domain.PayoutTelebirr, domain.PayoutMpesa:
 		provider := string(txn.PayoutType)
-		payoutResult, payoutErr = s.payoutSvc.TransferWallet(txn.TargetAmount, txn.ReceiverPhone, provider, txn.ReceiverName, txn.SenderName, "", remittanceID)
+		payoutResult, payoutErr = s.payoutSvc.TransferWallet(txn.TargetAmount, txn.ReceiverPhone, provider, txn.ReceiverName, txn.SenderName, txn.ReceiverPhone, remittanceID)
 	default:
 		payoutErr = fmt.Errorf("unknown payout type: %s", txn.PayoutType)
 	}

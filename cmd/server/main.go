@@ -139,6 +139,8 @@ func main() {
 	api.POST("/collection/pa-setup", collectionHandler.SetupPayerAuth)
 	api.POST("/collection/authorize", collectionHandler.AuthorizePayment)
 	api.POST("/collection/validate", collectionHandler.ValidateAndAuthorize)
+	api.POST("/collection/review", collectionHandler.ReviewPayment)
+	api.POST("/collection/webhook", collectionHandler.HandleWebhook)
 	
 	// 3DS Return Handler (Step 7 callback)
 	api.POST("/collection/return", func(c echo.Context) error {

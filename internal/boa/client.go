@@ -212,7 +212,7 @@ func (c *Client) FetchAccountNameOtherBank(bankID, accountID string) (*domain.Bo
 
 // FetchNameTelebirr validates a Telebirr wallet.
 func (c *Client) FetchNameTelebirr(phoneNumber string) (*domain.BoANameCheckResponse, error) {
-	path := fmt.Sprintf("/getName/telebirr/%s", phoneNumber)
+	path := fmt.Sprintf("/wallet/getName/TELEBIRR/%s", phoneNumber)
 	body, err := c.doGet(path)
 	if err != nil {
 		return nil, fmt.Errorf("boa fetch telebirr name: %w", err)
@@ -228,7 +228,7 @@ func (c *Client) FetchNameTelebirr(phoneNumber string) (*domain.BoANameCheckResp
 
 // FetchNameMpesa validates an Mpesa wallet.
 func (c *Client) FetchNameMpesa(phoneNumber string) (*domain.BoANameCheckResponse, error) {
-	path := fmt.Sprintf("/getName/mpesa/%s", phoneNumber)
+	path := fmt.Sprintf("/wallet/getName/MPESA/%s", phoneNumber)
 	body, err := c.doGet(path)
 	if err != nil {
 		return nil, fmt.Errorf("boa fetch mpesa name: %w", err)
