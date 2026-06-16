@@ -407,7 +407,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     const payload = JSON.parse(window.atob(base64));
                     jti = payload.jti;
                 } catch (e) {
-                    console.error('DEBUG: Failed to parse JTI from JWT:', e);
                     jti = token; // Last resort
                 }
             }
@@ -472,7 +471,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
                     if (data && data.MessageType === 'profile.completed') {
-                        console.log('DDC Profiling completed');
                         window.removeEventListener('message', handleDDCMessage);
                         resolve();
                     }
@@ -556,7 +554,6 @@ document.addEventListener('DOMContentLoaded', () => {
             window.onchallengecomplete = challengeCompleteHandler;
             
             const messageListener = (event) => {
-                console.log("Received window message:", event.data, "from origin:", event.origin);
                 if (event.data && event.data.type === 'challenge_complete') {
                     window.removeEventListener('message', messageListener);
                     challengeCompleteHandler();

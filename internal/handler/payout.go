@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"log"
 	"net/http"
 
 	"remittance-service/internal/domain"
@@ -63,7 +62,6 @@ func (h *payoutHandler) GetExchangeRate(c echo.Context) error {
 			"message": "currency parameter is required",
 		})
 	}
-	log.Printf("handler======>")
 	rate, err := h.svc.GetExchangeRate(currency)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{

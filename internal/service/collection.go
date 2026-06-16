@@ -129,8 +129,6 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 		return nil, err
 	}
 
-	log.Printf("DEBUG: AuthorizePayment request: %v", req)
-	log.Printf("DEBUG: AuthorizePayment response: %v", resp)
 
 	// Update DB based on status
 	paymentToken := ""
@@ -404,9 +402,6 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 		creq.ProcessingInformation.ActionTokenTypes = []string{"paymentInstrument", "instrumentIdentifier"}
 	}
 
-	// Final JSON Debug
-	jsonBytes, _ := json.MarshalIndent(creq, "", "  ")
-	log.Printf("DEBUG: Final CyberSource Request JSON:\n%s", string(jsonBytes))
 
 	return creq
 }
