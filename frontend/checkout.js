@@ -1,6 +1,6 @@
 /**
  * GlobalRemit - Checkout Orchestration for CyberSource Flex Microform & 3DS 2.x
- * Version: 1.2.1
+ * Version: 2.0.0 — Supports Saved Cards (Card-on-File)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -29,6 +29,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const expMonth = document.getElementById('exp-month');
     const expYear = document.getElementById('exp-year');
 
+    // Saved Cards Elements
+    const savedCardsSection = document.getElementById('saved-cards-section');
+    const savedCardsList = document.getElementById('saved-cards-list');
+    const newCardContainer = document.getElementById('new-card-container');
+    const useNewCardRadio = document.getElementById('use-new-card');
+
     // 3DS Challenge Elements
     const challengeModal = document.getElementById('challenge-modal');
     const challengeContainer = document.getElementById('challenge-container');
@@ -40,6 +46,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let microform = null;
     let currentRemittance = null;
     let captureContext = null;
+    let savedCards = [];
+    let selectedSavedCard = null; // stores { tokenId, expirationMonth, expirationYear }
 
     // ─── Initial Load ────────────────────────────────────────────────────────
     fetchRate();
@@ -121,6 +129,105 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // ─── Fetch Saved Cards ──────────────────────────────────────────────────
+    async function fetchSavedCards(email) {
+        if (!email) return [];
+        try {
+            const response = await fetch(`/api/collection/saved-cards?email=${encodeURIComponent(email)}`);
+            if (!response.ok) return [];
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
+        } catch (err) {
+            console.error('Failed to fetch saved cards', err);
+            return [];
+        }
+    }
+
+    function getCardBrandIcon(brand) {
+        switch (brand) {
+            case '001': return '💳'; // Visa
+            case '002': return '💳'; // Mastercard
+            case '003': return '💳'; // Amex
+            default: return '💳';
+        }
+    }
+
+    function getCardBrandName(brand) {
+        switch (brand) {
+            case '001': return 'Visa';
+            case '002': return 'Mastercard';
+            case '003': return 'Amex';
+            default: return 'Card';
+        }
+    }
+
+    function renderSavedCards(cards) {
+        savedCardsList.innerHTML = '';
+        selectedSavedCard = null;
+
+        if (!cards || cards.length === 0) {
+            savedCardsSection.classList.add('hidden');
+            newCardContainer.classList.remove('hidden');
+            return;
+        }
+
+        savedCardsSection.classList.remove('hidden');
+
+        cards.forEach((card, index) => {
+            const suffix = card.card_suffix || '****';
+            const brandName = getCardBrandName(card.card_brand);
+            const brandIcon = getCardBrandIcon(card.card_brand);
+
+            const label = document.createElement('label');
+            label.className = 'saved-card-option';
+            label.innerHTML = `
+                <input type="radio" name="payment-method" value="saved-${index}" data-token-id="${card.token_id}" data-exp-month="${card.expiration_month || ''}" data-exp-year="${card.expiration_year || ''}">
+                <div class="saved-card-info">
+                    <span class="card-icon">${brandIcon}</span>
+                    <span class="card-detail">
+                        ${brandName} •••• ${suffix}
+                        <span class="card-detail-sub">Token: ${card.token_id.substring(0, 8)}...</span>
+                    </span>
+                </div>
+            `;
+            savedCardsList.appendChild(label);
+        });
+
+        // Default to first saved card
+        const firstRadio = savedCardsList.querySelector('input[type="radio"]');
+        if (firstRadio) {
+            firstRadio.checked = true;
+            selectedSavedCard = {
+                tokenId: firstRadio.dataset.tokenId,
+                expirationMonth: firstRadio.dataset.expMonth,
+                expirationYear: firstRadio.dataset.expYear
+            };
+            newCardContainer.classList.add('hidden');
+            useNewCardRadio.checked = false;
+        }
+    }
+
+    // ─── Payment Method Radio Toggle ───────────────────────────────────────
+    document.addEventListener('change', (e) => {
+        if (e.target.name !== 'payment-method') return;
+
+        if (e.target.value === 'new') {
+            selectedSavedCard = null;
+            newCardContainer.classList.remove('hidden');
+            // Re-initialize Microform if needed
+            if (captureContext && !microform) {
+                initializeMicroform(captureContext);
+            }
+        } else {
+            selectedSavedCard = {
+                tokenId: e.target.dataset.tokenId,
+                expirationMonth: e.target.dataset.expMonth,
+                expirationYear: e.target.dataset.expYear
+            };
+            newCardContainer.classList.add('hidden');
+        }
+    });
+
     // ─── Stage 1: Initiation ───────────────────────────────────────────────
     remitForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -148,11 +255,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Prepare Modal
             modalTotal.textContent = `${currentRemittance.send_amount} ${currentRemittance.send_currency}`;
+            paymentError.classList.add('hidden');
+
+            // Step 1b: Fetch saved cards for this sender
+            const senderEmail = document.getElementById('sender_email').value;
+            savedCards = await fetchSavedCards(senderEmail);
+            renderSavedCards(savedCards);
+
+            // Show the modal
             paymentModal.classList.remove('hidden');
 
-            // Step 2: Initialize Flex Microform
-            await loadFlexSDK();
-            initializeMicroform(captureContext);
+            // Step 2: Only initialize Microform if no saved cards or user picks new card
+            if (savedCards.length === 0 || !selectedSavedCard) {
+                await loadFlexSDK();
+                initializeMicroform(captureContext);
+            }
 
         } catch (err) {
             alert(err.message);
@@ -194,6 +311,68 @@ document.addEventListener('DOMContentLoaded', () => {
         setPaymentLoading(true);
         paymentError.classList.add('hidden');
 
+        const senderData = {
+            first_name: document.getElementById('sender_name').value.split(' ')[0],
+            last_name: document.getElementById('sender_name').value.split(' ').slice(1).join(' ') || 'Sender',
+            email: document.getElementById('sender_email').value,
+            address: document.getElementById('sender_address').value,
+            city: document.getElementById('sender_city').value,
+            administrative_area: document.getElementById('sender_state').value,
+            country: document.getElementById('sender_country').value,
+            postal_code: document.getElementById('sender_postal').value
+        };
+
+        const recipientData = {
+            first_name: document.getElementById('receiver_name').value.split(' ')[0] || 'Recipient',
+            last_name: document.getElementById('receiver_name').value.split(' ').slice(1).join(' ') || 'Recipient',
+            address: document.getElementById('receiver_address').value,
+            city: document.getElementById('receiver_city').value,
+            country: document.getElementById('receiver_country').value
+        };
+
+        // ── SAVED CARD FLOW ──
+        if (selectedSavedCard) {
+            try {
+                // PA Setup with permanent token
+                const paSetupBody = {
+                    remittance_id: currentRemittance.remittance_id,
+                    permanent_token_id: selectedSavedCard.tokenId,
+                    expiration_month: selectedSavedCard.expirationMonth,
+                    expiration_year: selectedSavedCard.expirationYear
+                };
+
+                const paSetupResp = await fetch('/api/collection/pa-setup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(paSetupBody)
+                });
+
+                const paData = await paSetupResp.json();
+
+                // DDC
+                await performDDC(paData.device_data_collection_url, paData.access_token);
+
+                // Authorization with permanent token
+                await processAuthorization({
+                    remittance_id: currentRemittance.remittance_id,
+                    permanent_token_id: selectedSavedCard.tokenId,
+                    expiration_month: selectedSavedCard.expirationMonth,
+                    expiration_year: selectedSavedCard.expirationYear,
+                    pa_reference_id: paData.reference_id,
+                    amount: parseFloat(document.getElementById('send_amount').value).toFixed(2),
+                    currency: currentRemittance.send_currency,
+                    sender: senderData,
+                    recipient: recipientData
+                });
+
+            } catch (err) {
+                showPaymentError(err.message);
+                setPaymentLoading(false);
+            }
+            return;
+        }
+
+        // ── NEW CARD FLOW ──
         let year = expYear.value;
         if (year && year.length === 2) {
             year = '20' + year;
@@ -266,23 +445,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     pa_reference_id: paData.reference_id,
                     amount: parseFloat(document.getElementById('send_amount').value).toFixed(2),
                     currency: currentRemittance.send_currency,
-                    sender: {
-                        first_name: document.getElementById('sender_name').value.split(' ')[0],
-                        last_name: document.getElementById('sender_name').value.split(' ').slice(1).join(' ') || 'Sender',
-                        email: document.getElementById('sender_email').value,
-                        address: document.getElementById('sender_address').value,
-                        city: document.getElementById('sender_city').value,
-                        administrative_area: document.getElementById('sender_state').value,
-                        country: document.getElementById('sender_country').value,
-                        postal_code: document.getElementById('sender_postal').value
-                    },
-                    recipient: {
-                        first_name: document.getElementById('receiver_name').value.split(' ')[0] || 'Recipient',
-                        last_name: document.getElementById('receiver_name').value.split(' ').slice(1).join(' ') || 'Recipient',
-                        address: document.getElementById('receiver_address').value,
-                        city: document.getElementById('receiver_city').value,
-                        country: document.getElementById('receiver_country').value
-                    }
+                    sender: senderData,
+                    recipient: recipientData
                 });
 
             } catch (err) {
@@ -345,13 +509,13 @@ document.addEventListener('DOMContentLoaded', () => {
             window.location.href = `${redirectUrl}?ref=${currentRemittance.remittance_id}`;
         } else if (authResp.status === 'PENDING_AUTHENTICATION') {
             // STEP 7: Challenge Required
-            await handleChallenge(authResp.step_up_url, authResp.access_token, authResp.authentication_transaction_id);
+            await handleChallenge(authResp.step_up_url, authResp.access_token, authResp.authentication_transaction_id, authReq);
         } else {
             throw new Error(authResp.message || 'Payment declined');
         }
     }
 
-    function handleChallenge(url, jwt, txnId) {
+    function handleChallenge(url, jwt, txnId, authReq) {
         return new Promise((resolve, reject) => {
             paymentModal.classList.add('hidden');
             challengeModal.classList.remove('hidden');
@@ -365,21 +529,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
             document.getElementById('challenge-form').submit();
 
-            // Listen for completion (Simplification: CyberSource redirects the iframe back to our ReturnURL)
-            // For a real SPA, we'd listen for a postMessage or poll
-            // Here, we'll assume the browser will handle the redirect within the iframe.
-            // But we need to call ValidateAndAuthorize after the user finishes.
-            
-            // For this demo, let's provide a "I have finished" button OR use a timeout/message listener.
-            window.onchallengecomplete = async () => {
+            const challengeCompleteHandler = async () => {
                 try {
-                    const validateResp = await fetch('/api/collection/validate', {
+                    // Inject the returned transaction ID into the original full auth request
+                    authReq.authentication_transaction_id = txnId;
+                    
+                    const validateResp = await fetch('/api/collection/authorize', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            remittance_id: currentRemittance.remittance_id,
-                            authentication_transaction_id: txnId
-                        })
+                        body: JSON.stringify(authReq)
                     });
                     const finalData = await validateResp.json();
                     if (finalData.status === 'AUTHORIZED') {
@@ -394,6 +552,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     setPaymentLoading(false);
                 }
             };
+            // Support both direct window execution and cross-origin postMessage
+            window.onchallengecomplete = challengeCompleteHandler;
+            
+            const messageListener = (event) => {
+                console.log("Received window message:", event.data, "from origin:", event.origin);
+                if (event.data && event.data.type === 'challenge_complete') {
+                    window.removeEventListener('message', messageListener);
+                    challengeCompleteHandler();
+                }
+            };
+            window.addEventListener('message', messageListener);
+
         });
     }
 

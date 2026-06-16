@@ -138,10 +138,9 @@ func main() {
 	api.POST("/collection/capture-context", collectionHandler.CreateCaptureContext)
 	api.POST("/collection/pa-setup", collectionHandler.SetupPayerAuth)
 	api.POST("/collection/authorize", collectionHandler.AuthorizePayment)
-	api.POST("/collection/validate", collectionHandler.ValidateAndAuthorize)
 	api.POST("/collection/review", collectionHandler.ReviewPayment)
 	api.POST("/collection/webhook", collectionHandler.HandleWebhook)
-	
+	api.GET("/collection/saved-cards", collectionHandler.GetSenderCards)
 	// 3DS Return Handler (Step 7 callback)
 	api.POST("/collection/return", func(c echo.Context) error {
 		return c.HTML(http.StatusOK, `
@@ -150,13 +149,23 @@ func main() {
 			<head><title>Authentication Complete</title></head>
 			<body>
 				<script>
-					if (window.parent && window.parent.onchallengecomplete) {
-						window.parent.onchallengecomplete();
-					} else if (window.opener && window.opener.onchallengecomplete) {
-						window.opener.onchallengecomplete();
-					} else {
-						try { window.top.onchallengecomplete(); } catch(e) {}
+					// Try direct function call (works if same origin)
+					try {
+						if (window.parent && typeof window.parent.onchallengecomplete === 'function') {
+							window.parent.onchallengecomplete();
+						} else if (window.opener && typeof window.opener.onchallengecomplete === 'function') {
+							window.opener.onchallengecomplete();
+						} else if (window.top && typeof window.top.onchallengecomplete === 'function') {
+							window.top.onchallengecomplete();
+						}
+					} catch(e) {
+						console.error("Direct origin access blocked, trying postMessage");
 					}
+					// Use postMessage to bypass CORS if devtunnels vs localhost
+					try {
+						if (window.parent) window.parent.postMessage({ type: 'challenge_complete' }, '*');
+						if (window.top) window.top.postMessage({ type: 'challenge_complete' }, '*');
+					} catch (e) {}
 				</script>
 				<div style="text-align:center;font-family:sans-serif;margin-top:20px;">
 					<h3>Verification Complete</h3>

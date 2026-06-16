@@ -44,8 +44,11 @@ func (h *collectionHandler) SetupPayerAuth(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, echo.Map{"message": "invalid request"})
 	}
 
-	if req.RemittanceID == "" || req.TransientTokenJWT == "" {
-		return c.JSON(http.StatusBadRequest, echo.Map{"message": "remittance_id and transient_token_jwt are required"})
+	if req.RemittanceID == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"message": "remittance_id is required"})
+	}
+	if req.TransientTokenJWT == "" && req.PermanentTokenID == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"message": "either transient_token_jwt or permanent_token_id is required"})
 	}
 
 	resp, err := h.collectionSvc.SetupPASetup(&req)
@@ -62,9 +65,15 @@ func (h *collectionHandler) AuthorizePayment(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, echo.Map{"message": "invalid request"})
 	}
 
-	if req.RemittanceID == "" || req.TransientTokenJWT == "" {
-		return c.JSON(http.StatusBadRequest, echo.Map{"message": "remittance_id and transient_token_jwt are required"})
+	if req.RemittanceID == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"message": "remittance_id is required"})
 	}
+	if req.TransientTokenJWT == "" && req.PermanentTokenID == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"message": "either transient_token_jwt or permanent_token_id is required"})
+	}
+
+	// Capture IP for CyberSource fraud scoring
+	req.IPAddress = c.RealIP()
 
 	resp, err := h.collectionSvc.AuthorizePayment(&req)
 	if err != nil {
@@ -141,4 +150,18 @@ func (h *collectionHandler) HandleWebhook(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, echo.Map{"status": "received"})
+}
+
+func (h *collectionHandler) GetSenderCards(c echo.Context) error {
+	email := c.QueryParam("email")
+	if email == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"message": "email query parameter is required"})
+	}
+
+	cards, err := h.collectionSvc.GetSenderCards(email)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"message": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, cards)
 }

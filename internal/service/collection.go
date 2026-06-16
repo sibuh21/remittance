@@ -1,19 +1,30 @@
 package service
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 
 	"remittance-service/internal/cybersource"
 	"remittance-service/internal/domain"
+
+	"github.com/google/uuid"
 )
 
 // collectionService implements domain.CollectionService for CyberSource Flex Microform.
 type collectionService struct {
 	csRESTClient *cybersource.RESTClient
 	db           interface {
+		CreateTransaction(t *domain.Transaction) error
 		UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
+		UpdatePayoutResult(remittanceID, boaRef, payoutStatus, status string) error
+		GetTransactionByRef(ref string) (*domain.Transaction, error)
+		GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error)
+		GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error)
+		SaveSenderCard(card *domain.SenderCard) error
+		GetCardsBySenderEmail(email string) ([]*domain.SenderCard, error)
 	}
 	returnURL   string
 	onCollected func(remittanceID string)
@@ -21,7 +32,14 @@ type collectionService struct {
 
 // NewCollectionService creates a new CollectionService.
 func NewCollectionService(csRESTClient *cybersource.RESTClient, db interface {
+	CreateTransaction(t *domain.Transaction) error
 	UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
+	UpdatePayoutResult(remittanceID, boaRef, payoutStatus, status string) error
+	GetTransactionByRef(ref string) (*domain.Transaction, error)
+	GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error)
+	GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error)
+	SaveSenderCard(card *domain.SenderCard) error
+	GetCardsBySenderEmail(email string) ([]*domain.SenderCard, error)
 }, returnURL string, onCollected func(string)) domain.CollectionService {
 	return &collectionService{
 		csRESTClient: csRESTClient,
@@ -48,16 +66,27 @@ func (s *collectionService) SetupPASetup(req *domain.PASetupRequest) (*domain.PA
 		ClientReferenceInformation: cybersource.ClientReferenceInfo{
 			Code: req.RemittanceID,
 		},
-		TokenInformation: &cybersource.PASetupTokenInfo{
-			TransientToken:    req.TransientTokenJti,
-			TransientTokenJWT: req.TransientTokenJWT,
-		},
-		PaymentInformation: &cybersource.PASetupPaymentInfo{
+	}
+
+	if req.PermanentTokenID != "" {
+		paReq.PaymentInformation = &cybersource.PASetupPaymentInfo{
+			InstrumentIdentifier: &cybersource.TMSReference{ID: req.PermanentTokenID},
 			Card: &cybersource.CardInfo{
 				ExpirationMonth: req.ExpirationMonth,
 				ExpirationYear:  req.ExpirationYear,
 			},
-		},
+		}
+	} else {
+		paReq.TokenInformation = &cybersource.PASetupTokenInfo{
+			TransientToken:    req.TransientTokenJti,
+			TransientTokenJWT: req.TransientTokenJWT,
+		}
+		paReq.PaymentInformation = &cybersource.PASetupPaymentInfo{
+			Card: &cybersource.CardInfo{
+				ExpirationMonth: req.ExpirationMonth,
+				ExpirationYear:  req.ExpirationYear,
+			},
+		}
 	}
 
 	resp, err := s.csRESTClient.PASetup(paReq)
@@ -81,7 +110,15 @@ func (s *collectionService) SetupPASetup(req *domain.PASetupRequest) (*domain.PA
 }
 
 func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*domain.AuthorizeResponse, error) {
-	paReq := s.buildPaymentRequest(req, []string{domain.ActionConsumerAuth})
+	// Step 1: Build the CyberSource REST request
+	actionList := []string{domain.ActionAuthorize, domain.ActionConsumerAuth}
+	
+	// If we're validating a 3DS challenge, we must use VALIDATE_CONSUMER_AUTHENTICATION instead
+	if req.AuthenticationTransactionId != "" {
+		actionList = []string{domain.ActionAuthorize, domain.ActionValidateConsumerAuth}
+	}
+
+	paReq := s.buildPaymentRequest(req, actionList)
 	resp, err := s.csRESTClient.AuthorizePayment(paReq)
 	if err != nil {
 		return nil, err
@@ -92,10 +129,42 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 		return nil, err
 	}
 
+	log.Printf("DEBUG: AuthorizePayment request: %v", req)
+	log.Printf("DEBUG: AuthorizePayment response: %v", resp)
+
 	// Update DB based on status
+	paymentToken := ""
+	if resp.TokenInformation != nil && resp.TokenInformation.InstrumentIdentifier != nil {
+		paymentToken = resp.TokenInformation.InstrumentIdentifier.ID
+		domainResp.PaymentTokenID = paymentToken
+	}
+
+	// AUTO-SAVE CARD: Ensure tokens are saved even if transaction is flagged for review
+	if paymentToken != "" && req.Sender.Email != "" && (domainResp.Status == domain.CSStatusAuthorized || domainResp.Status == domain.CSStatusAuthorizedPendingReview) {
+		cardInfo := &domain.SenderCard{
+			ID:              uuid.New().String(),
+			SenderEmail:     req.Sender.Email,
+			TokenID:         paymentToken,
+			ExpirationMonth: req.ExpirationMonth,
+			ExpirationYear:  req.ExpirationYear,
+		}
+		if resp.PaymentInformation != nil && resp.PaymentInformation.Card != nil {
+			cardInfo.CardBIN = resp.PaymentInformation.Card.Bin
+			cardInfo.CardSuffix = resp.PaymentInformation.Card.Suffix
+			if cardInfo.CardSuffix == "" && req.TransientTokenJWT != "" {
+				cardInfo.CardSuffix = extractSuffixFromJWT(req.TransientTokenJWT)
+			}
+			cardInfo.CardBrand = resp.PaymentInformation.Card.Type
+		} else if req.TransientTokenJWT != "" {
+			cardInfo.CardSuffix = extractSuffixFromJWT(req.TransientTokenJWT)
+		}
+		_ = s.db.SaveSenderCard(cardInfo)
+	}
+
 	switch domainResp.Status {
 	case domain.CSStatusAuthorized:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollected))
+
 		if s.onCollected != nil {
 			s.onCollected(req.RemittanceID)
 		}
@@ -135,15 +204,40 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 		return nil, err
 	}
 
+	paymentToken := ""
+	if resp.TokenInformation != nil && resp.TokenInformation.InstrumentIdentifier != nil {
+		paymentToken = resp.TokenInformation.InstrumentIdentifier.ID
+		domainResp.PaymentTokenID = paymentToken
+	}
+
+	// AUTO-SAVE CARD (Post-3DS): Ensure tokens are saved even if transaction is flagged for review
+	t, _ := s.db.GetTransactionByRef(req.RemittanceID)
+	if t != nil && t.SenderEmail != "" && paymentToken != "" && (domainResp.Status == domain.CSStatusAuthorized || domainResp.Status == domain.CSStatusAuthorizedPendingReview) {
+		cardInfo := &domain.SenderCard{
+			ID:          uuid.New().String(),
+			SenderEmail: t.SenderEmail,
+			TokenID:     paymentToken,
+		}
+		if resp.PaymentInformation != nil && resp.PaymentInformation.Card != nil {
+			cardInfo.CardBIN = resp.PaymentInformation.Card.Bin
+			cardInfo.CardSuffix = resp.PaymentInformation.Card.Suffix
+			cardInfo.CardBrand = resp.PaymentInformation.Card.Type
+		}
+		_ = s.db.SaveSenderCard(cardInfo)
+	}
+
 	switch domainResp.Status {
 	case domain.CSStatusAuthorized:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollected))
+
 		if s.onCollected != nil {
 			s.onCollected(req.RemittanceID)
 		}
 	case domain.CSStatusAuthorizedPendingReview:
 		log.Printf("INFO: Remittance %s flagged for manual review (post-3DS)", req.RemittanceID)
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceReviewPending))
+	case domain.CSStatusPendingAuth:
+		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollectionPending))
 	default:
 		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceFailed))
 	}
@@ -156,7 +250,14 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 func (s *collectionService) ReviewPayment(remittanceID string, approve bool) error {
 	log.Printf("INFO: Manual review update for remittance %s - Approved: %v", remittanceID, approve)
 
+	// Fetch transaction to get the CyberSource reference for voiding if rejected
+	t, _ := s.db.GetTransactionByRef(remittanceID)
+
 	if !approve {
+		// If rejected, we ideally reverse the authorization hold
+		if t != nil && t.CybersourceRef != "" {
+			_ = s.csRESTClient.ReverseAuthorization(t.CybersourceRef)
+		}
 		return s.db.UpdateCollectionResult(remittanceID, "", "REVIEW_REJECTED", string(domain.RemittanceFailed))
 	}
 
@@ -174,6 +275,16 @@ func (s *collectionService) ReviewPayment(remittanceID string, approve bool) err
 	return nil
 }
 
+func (s *collectionService) GetSenderCards(email string) ([]*domain.SenderCard, error) {
+	if email == "" {
+		return nil, fmt.Errorf("email is required")
+	}
+	return s.db.GetCardsBySenderEmail(email)
+}
+func (s *collectionService) UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error {
+	return s.db.UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status)
+}
+
 func (s *collectionService) ProcessWebhook(n *domain.CyberSourceNotification) error {
 	log.Printf("INFO: Received CyberSource Webhook - Ref: %s, Decision: %s", n.MerchantReferenceCode, n.Decision)
 
@@ -185,18 +296,30 @@ func (s *collectionService) ProcessWebhook(n *domain.CyberSourceNotification) er
 	return s.ReviewPayment(n.MerchantReferenceCode, approve)
 }
 
+func (s *collectionService) validatedState(country, state string) string {
+	if country != "US" && country != "CA" {
+		return "" // Avoid sending region as "State" for UK/ETH etc.
+	}
+	return domain.NormalizeState(state)
+}
+
 func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, actionList []string) *cybersource.PaymentRequest {
 	senderAlpha2, senderAlpha3 := domain.GetCountryCodes(req.Sender.Country)
 	_, recipientAlpha3 := domain.GetCountryCodes(req.Recipient.Country)
 
-	return &cybersource.PaymentRequest{
+	// Only create a new token if we're using a new card (not a permanent token)
+	if req.PermanentTokenID == "" {
+		actionList = append(actionList, domain.ActionTokenCreate)
+	}
+
+	creq := &cybersource.PaymentRequest{
 		ClientReferenceInformation: cybersource.ClientReferenceInfo{
 			Code: req.RemittanceID,
 		},
 		ProcessingInformation: cybersource.ProcessingInfo{
 			Capture:               true,
 			CommerceIndicator:     domain.CommerceIndicatorInternet,
-			ActionList:            actionList,
+			ActionList:            s.enrichActionList(actionList, req),
 			BusinessApplicationId: domain.BusinessAppIDPersonToPerson,
 			AuthorizationOptions: &cybersource.AuthOptions{
 				AFTIndicator: "true",
@@ -207,52 +330,85 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 		},
 		OrderInformation: cybersource.OrderInfo{
 			BillTo: cybersource.BillTo{
-				FirstName:          req.Sender.FirstName,
-				LastName:           req.Sender.LastName,
-				Email:              req.Sender.Email,
-				Address1:           req.Sender.Address,
-				Locality:           req.Sender.City,
-				AdministrativeArea: domain.NormalizeState(req.Sender.AdministrativeArea),
+				FirstName:          strings.TrimSpace(req.Sender.FirstName),
+				LastName:           strings.TrimSpace(req.Sender.LastName),
+				Email:              strings.TrimSpace(req.Sender.Email),
+				Address1:           strings.TrimSpace(req.Sender.Address),
+				Locality:           strings.TrimSpace(req.Sender.City),
+				AdministrativeArea: s.validatedState(senderAlpha2, req.Sender.AdministrativeArea),
 				Country:            senderAlpha2,
-				PostalCode:         req.Sender.PostalCode,
+				PostalCode:         strings.TrimSpace(req.Sender.PostalCode),
 			},
 			AmountDetails: cybersource.AmountDetails{
 				TotalAmount: formatAmount(req.Amount),
 				Currency:    req.Currency,
 			},
 		},
-		TokenInformation: &cybersource.TokenInfo{
-			TransientTokenJWT: req.TransientTokenJWT,
+		DeviceInformation: &cybersource.DeviceInfo{
+			FingerprintSessionId: req.FingerprintID,
+			IPAddress:            req.IPAddress,
 		},
-		PaymentInformation: &cybersource.PaymentInfo{
+		ConsumerAuthenticationInfo: &cybersource.ConsumerAuthInfo{
+			ReferenceId:                 req.PAReferenceId,
+			ReturnUrl:                   s.returnURL,
+			DeviceChannel:               domain.DeviceChannelBrowser,
+			AuthenticationTransactionId: req.AuthenticationTransactionId,
+		},
+		SenderInformation: &cybersource.SenderInfo{
+			FirstName:          strings.TrimSpace(req.Sender.FirstName),
+			LastName:           strings.TrimSpace(req.Sender.LastName),
+			Address1:           strings.TrimSpace(req.Sender.Address),
+			Locality:           strings.TrimSpace(req.Sender.City),
+			AdministrativeArea: s.validatedState(senderAlpha2, req.Sender.AdministrativeArea),
+			CountryCode:        senderAlpha3,
+			PostalCode:         strings.TrimSpace(req.Sender.PostalCode),
+		},
+		RecipientInformation: &cybersource.RecipientInfo{
+			FirstName:  strings.TrimSpace(req.Recipient.FirstName),
+			LastName:   strings.TrimSpace(req.Recipient.LastName),
+			Address1:   strings.TrimSpace(req.Recipient.Address),
+			Locality:   strings.TrimSpace(req.Recipient.City),
+			Country:    recipientAlpha3,
+			PostalCode: "1000", // Default for ETH if missing
+		},
+	}
+
+	// Token handling: saved card vs new card
+	if req.PermanentTokenID != "" {
+		// Use stored permanent token (Card-on-File)
+		// CyberSource requires expiration even with instrumentIdentifier
+		creq.PaymentInformation = &cybersource.PaymentInfo{
+			InstrumentIdentifier: &cybersource.TMSReference{ID: req.PermanentTokenID},
 			Card: &cybersource.CardInfo{
 				ExpirationMonth: req.ExpirationMonth,
 				ExpirationYear:  req.ExpirationYear,
 			},
-		},
-		ConsumerAuthenticationInfo: &cybersource.ConsumerAuthInfo{
-			ReferenceId:   req.PAReferenceId,
-			ReturnUrl:     s.returnURL,
-			DeviceChannel: domain.DeviceChannelBrowser,
-		},
-		SenderInformation: &cybersource.SenderInfo{
-			FirstName:          req.Sender.FirstName,
-			LastName:           req.Sender.LastName,
-			Address1:           req.Sender.Address,
-			Locality:           req.Sender.City,
-			AdministrativeArea: domain.NormalizeState(req.Sender.AdministrativeArea),
-			CountryCode:        senderAlpha3,
-			PostalCode:         req.Sender.PostalCode,
-		},
-		RecipientInformation: &cybersource.RecipientInfo{
-			FirstName:  req.Recipient.FirstName,
-			LastName:   req.Recipient.LastName,
-			Address1:   req.Recipient.Address,
-			Locality:   req.Recipient.City,
-			Country:    recipientAlpha3,
-			PostalCode: "0000", // Default for ETH if missing
-		},
+		}
+		// Flag as stored credential for Card-on-File compliance
+		creq.ProcessingInformation.AuthorizationOptions.Initiator = &cybersource.Initiator{
+			Type:                 "customer",
+			StoredCredentialUsed: "true",
+		}
+	} else {
+		// Use transient token from Flex Microform
+		creq.TokenInformation = &cybersource.TokenInfo{
+			TransientTokenJWT: req.TransientTokenJWT,
+		}
+		creq.PaymentInformation = &cybersource.PaymentInfo{
+			Card: &cybersource.CardInfo{
+				ExpirationMonth: req.ExpirationMonth,
+				ExpirationYear:  req.ExpirationYear,
+			},
+		}
+		// Include ActionTokenTypes only for new cards
+		creq.ProcessingInformation.ActionTokenTypes = []string{"paymentInstrument", "instrumentIdentifier"}
 	}
+
+	// Final JSON Debug
+	jsonBytes, _ := json.MarshalIndent(creq, "", "  ")
+	log.Printf("DEBUG: Final CyberSource Request JSON:\n%s", string(jsonBytes))
+
+	return creq
 }
 
 func formatAmount(amount string) string {
@@ -271,6 +427,36 @@ func formatAmount(amount string) string {
 		return parts[0] + "." + parts[1][:2]
 	}
 	return amount
+}
+
+func (s *collectionService) enrichActionList(base []string, req *domain.AuthorizeRequest) []string {
+	if req.ShouldTokenize {
+		base = append(base, domain.ActionTokenCreate)
+	}
+	return base
+}
+
+func (s *collectionService) buildTokenInfo(req *domain.AuthorizeRequest) *cybersource.TokenInfo {
+	if req.PermanentTokenID != "" {
+		return nil // No transient token needed if using permanent token
+	}
+	return &cybersource.TokenInfo{
+		TransientTokenJWT: req.TransientTokenJWT,
+	}
+}
+
+func (s *collectionService) buildPaymentInfo(req *domain.AuthorizeRequest) *cybersource.PaymentInfo {
+	pi := &cybersource.PaymentInfo{}
+
+	if req.PermanentTokenID != "" {
+		pi.PaymentInstrument = &cybersource.TMSReference{ID: req.PermanentTokenID}
+	} else {
+		pi.Card = &cybersource.CardInfo{
+			ExpirationMonth: req.ExpirationMonth,
+			ExpirationYear:  req.ExpirationYear,
+		}
+	}
+	return pi
 }
 
 func (s *collectionService) mapPaymentResponse(resp *cybersource.PaymentResponse, remittanceID string) (*domain.AuthorizeResponse, error) {
@@ -292,4 +478,26 @@ func (s *collectionService) mapPaymentResponse(resp *cybersource.PaymentResponse
 	}
 
 	return domainResp, nil
+}
+
+// extractSuffixFromJWT parses the Flex Microform transient token to extract the last 4 digits (suffix)
+// since CyberSource responses occasionally omit the suffix on AFT approvals.
+func extractSuffixFromJWT(jwt string) string {
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var data struct {
+		Data struct {
+			Number string `json:"number"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(payload, &data); err == nil && len(data.Data.Number) > 4 {
+		return data.Data.Number[len(data.Data.Number)-4:]
+	}
+	return ""
 }

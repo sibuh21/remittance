@@ -148,8 +148,10 @@ const (
 	CSStatusRejected                = "REJECTED"
 
 	// Processing Action Lists
+	ActionAuthorize            = "AUTHORIZATION"
 	ActionConsumerAuth         = "CONSUMER_AUTHENTICATION"
 	ActionValidateConsumerAuth = "VALIDATE_CONSUMER_AUTHENTICATION"
+	ActionTokenCreate          = "TOKEN_CREATE"
 
 	// AFT (Account Funding Transaction) Constants
 	BusinessAppIDPersonToPerson = "PP" // Person-to-Person transfer
@@ -171,9 +173,10 @@ type CaptureContextRequest struct {
 type PASetupRequest struct {
 	RemittanceID      string `json:"remittance_id"`
 	TransientTokenJti string `json:"transient_token_jti"`
-	TransientTokenJWT string `json:"transient_token_jwt"`
-	ExpirationMonth   string `json:"expiration_month"`
-	ExpirationYear    string `json:"expiration_year"`
+	TransientTokenJWT string `json:"transient_token_jwt,omitempty"`
+	ExpirationMonth   string `json:"expiration_month,omitempty"`
+	ExpirationYear    string `json:"expiration_year,omitempty"`
+	PermanentTokenID  string `json:"permanent_token_id,omitempty"`
 }
 
 // PASetupResponse
@@ -188,13 +191,18 @@ type AuthorizeRequest struct {
 	RemittanceID      string          `json:"remittance_id"`
 	TransientTokenJti string          `json:"transient_token_jti"`
 	TransientTokenJWT string          `json:"transient_token_jwt"`
+	IPAddress         string          `json:"ip_address,omitempty"`
 	PAReferenceId     string          `json:"pa_reference_id"`
 	ExpirationMonth   string          `json:"expiration_month"`
 	ExpirationYear    string          `json:"expiration_year"`
+	PermanentTokenID  string          `json:"permanent_token_id,omitempty"`
+	ShouldTokenize    bool            `json:"should_tokenize,omitempty"`
+	FingerprintID     string          `json:"fingerprint_id,omitempty"` // For Section 6
 	Sender            RemittanceParty `json:"sender"`
 	Recipient         RemittanceParty `json:"recipient"`
-	Amount            string          `json:"amount"`
-	Currency          string          `json:"currency"`
+	Amount                      string          `json:"amount"`
+	Currency                    string          `json:"currency"`
+	AuthenticationTransactionId string          `json:"authentication_transaction_id,omitempty"`
 }
 
 // ValidateRequest (Step 7)
@@ -236,6 +244,19 @@ type RemittanceParty struct {
 	AccountNumber      string `json:"account_number,omitempty"`
 }
 
+// SenderCard represents a payment token saved for a specific sender.
+type SenderCard struct {
+	ID              string    `json:"id"`
+	SenderEmail     string    `json:"sender_email"`
+	TokenID         string    `json:"token_id"`
+	CardBIN         string    `json:"card_bin"`
+	CardSuffix      string    `json:"card_suffix"`
+	CardBrand       string    `json:"card_brand"`
+	ExpirationMonth string    `json:"expiration_month"`
+	ExpirationYear  string    `json:"expiration_year"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 // AuthorizeResponse
 type AuthorizeResponse struct {
 	Status                      string `json:"status"` // AUTHORIZED, PENDING_AUTHENTICATION, DECLINED, ERROR
@@ -244,6 +265,7 @@ type AuthorizeResponse struct {
 	AccessToken                 string `json:"access_token,omitempty"`
 	Pareq                       string `json:"pareq,omitempty"`
 	AuthenticationTransactionId string `json:"authentication_transaction_id,omitempty"`
+	PaymentTokenID              string `json:"payment_token_id,omitempty"`
 	Message                     string `json:"message,omitempty"`
 }
 
@@ -492,6 +514,8 @@ type CollectionService interface {
 	ValidateAndAuthorize(req *ValidateRequest) (*AuthorizeResponse, error)
 	ReviewPayment(remittanceID string, approve bool) error
 	ProcessWebhook(notification *CyberSourceNotification) error
+	GetSenderCards(email string) ([]*SenderCard, error)
+	UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
 }
 
 // BoAClient defines the interface for interacting with Bank of Abyssinia APIs.
@@ -540,6 +564,7 @@ type CollectionHandler interface {
 	ValidateAndAuthorize(c echo.Context) error
 	ReviewPayment(c echo.Context) error
 	HandleWebhook(c echo.Context) error
+	GetSenderCards(c echo.Context) error
 }
 
 // PayoutHandler handles Bank of Abyssinia payout HTTP endpoints.

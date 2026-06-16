@@ -178,6 +178,8 @@ func (c *Client) FetchAccountName(accountID string) (*domain.BoAAccountInfo, err
 		return nil, fmt.Errorf("boa fetch name: parse error: %w", err)
 	}
 
+	log.Printf("DEBUG: BoA account raw response: %s", string(body))
+
 	if strings.ToLower(resp.Header.Status) != "success" || len(resp.Body) == 0 {
 		return nil, fmt.Errorf("boa fetch name: account not found or error status: %s", resp.Header.Status)
 	}
@@ -201,12 +203,15 @@ func (c *Client) FetchAccountNameOtherBank(bankID, accountID string) (*domain.Bo
 		return nil, fmt.Errorf("boa fetch name other bank: parse error: %w", err)
 	}
 
+	log.Printf("DEBUG: Other bank account raw response: %s", string(body))
+
 	if strings.ToLower(resp.Header.Status) != "success" || len(resp.Body) == 0 {
 		return nil, &domain.BoAError{
 			Message: "account validation failed or error status",
 		}
 	}
 
+	log.Printf("DEBUG: Other bank account info: %+v", resp.Body[0])
 	return &resp.Body[0], nil
 }
 
@@ -355,7 +360,7 @@ func (c *Client) GetExchangeRate(baseCurrency string) (*domain.BoAAPIResponse, e
 	if err != nil {
 		return nil, fmt.Errorf("boa exchange rate: %w", err)
 	}
-	log.Printf("exchange error %v", err)
+	log.Printf("exchange error %v body %s", err, string(body))
 	var resp struct {
 		Header domain.BoAResponseHeader `json:"Header"`
 		Body   []domain.BoACurrencyRate `json:"Body"`
@@ -424,6 +429,7 @@ func (c *Client) doGet(path string) ([]byte, error) {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	log.Printf("resp: %v,status code: %d  error: %v", resp.Body, resp.StatusCode, err)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

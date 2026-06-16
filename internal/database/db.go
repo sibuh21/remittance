@@ -61,6 +61,18 @@ func (db *DB) InitializeSchema() error {
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS sender_cards (
+		id UUID PRIMARY KEY,
+		sender_email VARCHAR(255) NOT NULL,
+		token_id VARCHAR(100) UNIQUE NOT NULL,
+		card_bin VARCHAR(10),
+		card_suffix VARCHAR(10),
+		card_brand VARCHAR(50),
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_sender_cards_email ON sender_cards(sender_email);
 	`
 	_, err := db.Conn.Exec(query)
 	return err
@@ -213,4 +225,41 @@ func (db *DB) GetTransactionsByReceiver(phone string, status string) ([]*domain.
 		txns = append(txns, &t)
 	}
 	return txns, nil
+}
+func (db *DB) SaveSenderCard(card *domain.SenderCard) error {
+	// Check if token already exists to avoid duplicates
+	var exists bool
+	_ = db.Conn.QueryRow("SELECT EXISTS(SELECT 1 FROM sender_cards WHERE token_id = $1)", card.TokenID).Scan(&exists)
+	if exists {
+		return nil
+	}
+
+	query := `
+	INSERT INTO sender_cards (id, sender_email, token_id, card_bin, card_suffix, card_brand, expiration_month, expiration_year)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`
+	_, err := db.Conn.Exec(query, card.ID, card.SenderEmail, card.TokenID, card.CardBIN, card.CardSuffix, card.CardBrand, card.ExpirationMonth, card.ExpirationYear)
+	return err
+}
+
+func (db *DB) GetCardsBySenderEmail(email string) ([]*domain.SenderCard, error) {
+	query := `SELECT id, sender_email, token_id, card_bin, card_suffix, card_brand, 
+	          COALESCE(expiration_month, '') as expiration_month, COALESCE(expiration_year, '') as expiration_year, created_at 
+	          FROM sender_cards WHERE sender_email = $1 ORDER BY created_at DESC`
+	rows, err := db.Conn.Query(query, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cards []*domain.SenderCard
+	for rows.Next() {
+		var c domain.SenderCard
+		err := rows.Scan(&c.ID, &c.SenderEmail, &c.TokenID, &c.CardBIN, &c.CardSuffix, &c.CardBrand, &c.ExpirationMonth, &c.ExpirationYear, &c.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		cards = append(cards, &c)
+	}
+	return cards, nil
 }

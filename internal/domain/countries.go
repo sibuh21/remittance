@@ -36,6 +36,9 @@ var CountryMap = map[string]CountryCode{
 	"ITALY":            {Alpha2: "IT", Alpha3: "ITA"},
 	"ITA":              {Alpha2: "IT", Alpha3: "ITA"},
 	"IT":               {Alpha2: "IT", Alpha3: "ITA"},
+	"POLAND":           {Alpha2: "PL", Alpha3: "POL"},
+	"PL":               {Alpha2: "PL", Alpha3: "POL"},
+	"POL":              {Alpha2: "PL", Alpha3: "POL"},
 }
 
 // GetCountryCodes resolves a string (name or code) to its ISO Alpha-2 and Alpha-3 codes.

@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=1.1">
+    <link rel="stylesheet" href="styles.css?v=2.0">
 </head>
 <body>
     <div class="app-container">
@@ -161,7 +161,20 @@
                         <span class="summary-amount" id="modal-total">0.00 USD</span>
                     </div>
 
-                    <div class="card-input-container">
+                    <!-- Saved Cards Section -->
+                    <div id="saved-cards-section" class="saved-cards-section hidden">
+                        <span class="section-label">Your Saved Cards</span>
+                        <div id="saved-cards-list" class="saved-cards-list"></div>
+                        <label class="saved-card-option new-card-option">
+                            <input type="radio" name="payment-method" value="new" id="use-new-card" checked>
+                            <div class="saved-card-info">
+                                <span class="card-icon">➕</span>
+                                <span class="card-detail">Use a new card</span>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div id="new-card-container" class="card-input-container">
                         <div class="form-group full-width">
                             <label class="form-label">Card Number</label>
                             <div id="card-number-container" class="flex-iframe-container"></div>
@@ -212,6 +225,6 @@
     </div>
 
     <!-- CyberSource Flex SDK will be loaded dynamically -->
-    <script src="checkout.js?v=1.1"></script>
+    <script src="checkout.js?v=2.2"></script>
 </body>
 </html>

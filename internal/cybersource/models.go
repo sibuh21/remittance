@@ -30,8 +30,8 @@ type ProcessingInfo struct {
 	CommerceIndicator    string        `json:"commerceIndicator,omitempty"`
 	ActionList           []string      `json:"actionList"`
 	BusinessApplicationId string        `json:"businessApplicationId,omitempty"` // "PP" for Person-to-Person
-	ActionTokenTypes     []string      `json:"actionTokenTypes,omitempty"`
-	AuthorizationOptions *AuthOptions  `json:"authorizationOptions,omitempty"`
+	ActionTokenTypes      []string      `json:"actionTokenTypes,omitempty"` // ["paymentInstrument", "instrumentIdentifier"]
+	AuthorizationOptions  *AuthOptions  `json:"authorizationOptions,omitempty"`
 }
 
 type AuthOptions struct {
@@ -82,14 +82,22 @@ type TokenInfo struct {
 }
 
 type PaymentInfo struct {
-	Customer *CustomerRef `json:"customer,omitempty"`
-	Card     *CardInfo    `json:"card,omitempty"`
+	Customer             *CustomerRef  `json:"customer,omitempty"`
+	Card                 *CardInfo     `json:"card,omitempty"`
+	PaymentInstrument    *TMSReference `json:"paymentInstrument,omitempty"`
+	InstrumentIdentifier *TMSReference `json:"instrumentIdentifier,omitempty"`
+}
+
+type TMSReference struct {
+	ID string `json:"id"`
 }
 
 type CardInfo struct {
 	ExpirationMonth string `json:"expirationMonth,omitempty"`
 	ExpirationYear  string `json:"expirationYear,omitempty"`
 	Type            string `json:"type,omitempty"`
+	Bin             string `json:"bin,omitempty"`
+	Suffix          string `json:"suffix,omitempty"`
 }
 
 type CustomerRef struct {
@@ -185,6 +193,7 @@ type PaymentResponse struct {
 	ProcessorInformation       *ProcessorInfo        `json:"processorInformation,omitempty"`
 	OrderInformation           *OrderInfoResponse    `json:"orderInformation,omitempty"`
 	TokenInformation           *TokenInfoResponse    `json:"tokenInformation,omitempty"`
+	PaymentInformation         *PaymentInfo          `json:"paymentInformation,omitempty"`
 	ErrorInformation           *ErrorInfo            `json:"errorInformation,omitempty"`
 	SubmitTimeUtc              time.Time             `json:"submitTimeUtc"`
 }
@@ -259,8 +268,9 @@ type PASetupTokenInfo struct {
 }
 
 type PASetupPaymentInfo struct {
-	Customer *CustomerRef `json:"customer,omitempty"`
-	Card     *CardInfo    `json:"card,omitempty"`
+	Customer             *CustomerRef  `json:"customer,omitempty"`
+	InstrumentIdentifier *TMSReference `json:"instrumentIdentifier,omitempty"`
+	Card                 *CardInfo     `json:"card,omitempty"`
 }
 
 type PASetupResponse struct {
