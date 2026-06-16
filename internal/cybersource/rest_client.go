@@ -94,6 +94,39 @@ func (c *RESTClient) AuthorizePayment(req *PaymentRequest) (*PaymentResponse, er
 	return &resp, nil
 }
 
+// ReverseAuthorization reverses/voids an authorized payment to release the hold on the sender's card.
+// This is used when a reviewed (AUTHORIZED_PENDING_REVIEW) payment is rejected.
+func (c *RESTClient) ReverseAuthorization(paymentID string) error {
+	path := fmt.Sprintf("/pts/v2/payments/%s/reversals", paymentID)
+
+	revReq := struct {
+		ClientReferenceInformation ClientReferenceInfo `json:"clientReferenceInformation"`
+	}{
+		ClientReferenceInformation: ClientReferenceInfo{
+			Code: "REV-" + paymentID,
+		},
+	}
+
+	respBody, err := c.doPost(path, revReq)
+	if err != nil {
+		return fmt.Errorf("reversal failed for payment %s: %w (body: %s)", paymentID, err, string(respBody))
+	}
+
+	var resp struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return fmt.Errorf("failed to parse reversal response: %w", err)
+	}
+
+	if resp.Status != "REVERSED" && resp.Status != "VOIDED" {
+		log.Printf("WARN: Reversal for %s returned status: %s", paymentID, resp.Status)
+	}
+
+	log.Printf("INFO: Payment %s reversed successfully (status: %s)", paymentID, resp.Status)
+	return nil
+}
+
 // doPost handles REST POST requests with HTTP Signature authentication.
 func (c *RESTClient) doPost(path string, payload any) ([]byte, error) {
 	jsonData, err := json.Marshal(payload)
