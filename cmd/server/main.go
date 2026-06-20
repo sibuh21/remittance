@@ -81,12 +81,12 @@ func main() {
 	// We use a pointer or a variable to avoid circular dependency during initialization
 	var remittanceSvc domain.RemittanceService
 
-	onCollected := func(remittanceID string) {
-		log.Printf("INFO: Automatic payout triggered for remittance %s", remittanceID)
+	onCollected := func(ID string) {
+		log.Printf("INFO: Automatic payout triggered for remittance %s", ID)
 		go func() {
-			_, err := remittanceSvc.ExecutePayout(remittanceID)
+			_, err := remittanceSvc.ExecutePayout(ID)
 			if err != nil {
-				log.Printf("ERROR: Automatic payout failed for %s: %v", remittanceID, err)
+				log.Printf("ERROR: Automatic payout failed for %s: %v", ID, err)
 			}
 		}()
 	}
@@ -126,7 +126,7 @@ func main() {
 	// === Remittance (End-to-End Flow) ===
 	// POST /api/remittance             - Initiate a remittance (validate + checkout fields)
 	// POST /api/remittance/payout      - Manually trigger payout for a collected remittance
-	// GET  /api/remittance/status/:id   - Get transaction status
+	// GET  /api/remittance/status/:id   - Get remittance status
 	api.POST("/remittance", remittanceHandler.InitiateRemittance)
 	api.POST("/remittance/payout", remittanceHandler.TriggerPayout)
 	api.GET("/remittance/status/:id", remittanceHandler.GetStatus)
@@ -141,53 +141,20 @@ func main() {
 	api.POST("/collection/review", collectionHandler.ReviewPayment)
 	api.POST("/collection/webhook", collectionHandler.HandleWebhook)
 	api.GET("/collection/saved-cards", collectionHandler.GetSenderCards)
-	// 3DS Return Handler (Step 7 callback)
-	api.POST("/collection/return", func(c echo.Context) error {
-		return c.HTML(http.StatusOK, `
-			<!DOCTYPE html>
-			<html>
-			<head><title>Authentication Complete</title></head>
-			<body>
-				<script>
-					// Try direct function call (works if same origin)
-					try {
-						if (window.parent && typeof window.parent.onchallengecomplete === 'function') {
-							window.parent.onchallengecomplete();
-						} else if (window.opener && typeof window.opener.onchallengecomplete === 'function') {
-							window.opener.onchallengecomplete();
-						} else if (window.top && typeof window.top.onchallengecomplete === 'function') {
-							window.top.onchallengecomplete();
-						}
-					} catch(e) {
-						console.error("Direct origin access blocked, trying postMessage");
-					}
-					// Use postMessage to bypass CORS if devtunnels vs localhost
-					try {
-						if (window.parent) window.parent.postMessage({ type: 'challenge_complete' }, '*');
-						if (window.top) window.top.postMessage({ type: 'challenge_complete' }, '*');
-					} catch (e) {}
-				</script>
-				<div style="text-align:center;font-family:sans-serif;margin-top:20px;">
-					<h3>Verification Complete</h3>
-					<p>This window will close automatically.</p>
-				</div>
-			</body>
-			</html>
-		`)
-	})
+	api.POST("/collection/return", collectionHandler.Handle3DSReturn)
 
 	// === Payout (Bank of Abyssinia Outbound) ===
 	// POST /api/payout/validate      - Validate beneficiary account/wallet
 	// GET  /api/payout/rate/:currency - Get exchange rate
 	// GET  /api/payout/banks          - Get available banks for other-bank transfer
 	// GET  /api/payout/balance        - Get settlement account balance
-	// GET  /api/payout/status/:id     - Check payout transaction status
+	// GET  /api/payout/status/:id     - Check payout remittance status
 	payout := api.Group("/payout")
 	payout.POST("/validate", payoutHandler.ValidateBeneficiary)
 	payout.GET("/rate/:currency", payoutHandler.GetExchangeRate)
 	payout.GET("/banks", payoutHandler.GetBanks)
 	payout.GET("/balance", payoutHandler.GetBalance)
-	payout.GET("/status/:id", payoutHandler.CheckTransactionStatus)
+	payout.GET("/status/:id", payoutHandler.CheckRemittanceStatus)
 
 	// ─── Checkout Result Pages ──────────────────────────────────────────────
 	e.GET("/checkout/success", func(c echo.Context) error {

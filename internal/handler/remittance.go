@@ -73,20 +73,20 @@ func (h *remittanceHandler) GetStatus(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"message": "id is required"})
 	}
 
-	txn, err := h.svc.GetTransactionStatus(id)
+	rem, err := h.svc.GetRemittanceStatus(id)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
-			return c.JSON(http.StatusNotFound, map[string]string{"message": "transaction not found"})
+			return c.JSON(http.StatusNotFound, map[string]string{"message": "remittance not found"})
 		}
 		// Log the actual error for the developer
 		log.Printf("ERROR: Database error in GetStatus: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"message": "failed to retrieve transaction status",
+			"message": "failed to retrieve remittance status",
 			"detail":  err.Error(),
 		})
 	}
 
-	return h.formatTransactionResponse(c, txn)
+	return h.formatRemittanceResponse(c, rem)
 }
 
 // ListSenderRemittances handles GET /api/remittance/sender/:email
@@ -94,12 +94,12 @@ func (h *remittanceHandler) ListSenderRemittances(c echo.Context) error {
 	email := c.Param("email")
 	status := domain.RemittanceStatus(c.QueryParam("status"))
 	
-	txns, err := h.svc.GetSenderRemittances(email, status)
+	rems, err := h.svc.GetSenderRemittances(email, status)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"message": "failed to list remittances", "detail": err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, txns)
+	return c.JSON(http.StatusOK, rems)
 }
 
 // ListReceiverRemittances handles GET /api/remittance/receiver/:phone
@@ -107,14 +107,14 @@ func (h *remittanceHandler) ListReceiverRemittances(c echo.Context) error {
 	phone := c.Param("phone")
 	status := domain.RemittanceStatus(c.QueryParam("status"))
 	
-	txns, err := h.svc.GetReceiverRemittances(phone, status)
+	rems, err := h.svc.GetReceiverRemittances(phone, status)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"message": "failed to list remittances", "detail": err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, txns)
+	return c.JSON(http.StatusOK, rems)
 }
 
-func (h *remittanceHandler) formatTransactionResponse(c echo.Context, t *domain.Transaction) error {
+func (h *remittanceHandler) formatRemittanceResponse(c echo.Context, t *domain.Remittance) error {
 	return c.JSON(http.StatusOK, t)
 }

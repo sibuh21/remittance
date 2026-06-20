@@ -106,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateReceiveAmount() {
         const amount = parseFloat(sendAmount.value) || 0;
         const total = amount * currentRate;
-        approxReceiveDisplay.textContent = `${total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ETB`;
+        approxReceiveDisplay.textContent = `${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ETB`;
     }
 
     sendAmount.addEventListener('input', updateReceiveAmount);
@@ -330,12 +330,23 @@ document.addEventListener('DOMContentLoaded', () => {
             country: document.getElementById('receiver_country').value
         };
 
+        // Validate that we have a remittance ID from the initiation step
+        // Validate that we have a remittance ID from the initiation step
+        const id = currentRemittance.id
+        if (!id) {
+            console.error('ID MISSING', currentRemittance);
+            alert('ID MISSING: ' + JSON.stringify(currentRemittance));
+            showPaymentError('Technical error: No Transaction Reference found. Please refresh and try again.');
+            setPaymentLoading(false);
+            return;
+        }
+
         // ── SAVED CARD FLOW ──
         if (selectedSavedCard) {
             try {
                 // PA Setup with permanent token
                 const paSetupBody = {
-                    remittance_id: currentRemittance.remittance_id,
+                    id: id,
                     permanent_token_id: selectedSavedCard.tokenId,
                     expiration_month: selectedSavedCard.expirationMonth,
                     expiration_year: selectedSavedCard.expirationYear
@@ -354,7 +365,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Authorization with permanent token
                 await processAuthorization({
-                    remittance_id: currentRemittance.remittance_id,
+                    id: id,
                     permanent_token_id: selectedSavedCard.tokenId,
                     expiration_month: selectedSavedCard.expirationMonth,
                     expiration_year: selectedSavedCard.expirationYear,
@@ -411,24 +422,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
-            
+
             try {
                 // Step 4: PA Setup
                 const paSetupBody = {
-                    remittance_id: currentRemittance.remittance_id,
+                    id: id,
                     transient_token_jti: jti,
                     transient_token_jwt: token,
                     expiration_month: month,
                     expiration_year: year
                 };
-                
+
 
                 const paSetupResp = await fetch('/api/collection/pa-setup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(paSetupBody)
                 });
-                
+
                 const paData = await paSetupResp.json();
 
                 // Step 5: Device Data Collection (DDC)
@@ -436,7 +447,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Step 6: Authorization Request
                 await processAuthorization({
-                    remittance_id: currentRemittance.remittance_id,
+                    id: id,
                     transient_token_jti: jti,
                     transient_token_jwt: token,
                     expiration_month: month,
@@ -465,7 +476,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </form>
                 <iframe name="ddc-iframe" style="display:none;"></iframe>
             `;
-            
+
             // CyberSource DDC completion listener
             const handleDDCMessage = (event) => {
                 try {
@@ -478,9 +489,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Ignore non-JSON messages
                 }
             };
-            
+
             window.addEventListener('message', handleDDCMessage);
-            
+
             const form = document.getElementById('ddc-form');
             form.submit();
 
@@ -504,7 +515,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (authResp.status === 'AUTHORIZED' || authResp.status === 'AUTHORIZED_PENDING_REVIEW') {
             const redirectUrl = authResp.status === 'AUTHORIZED_PENDING_REVIEW' ? '/checkout/review' : '/checkout/success';
-            window.location.href = `${redirectUrl}?ref=${currentRemittance.remittance_id}`;
+            window.location.href = `${redirectUrl}?ref=${authReq.id}`;
         } else if (authResp.status === 'PENDING_AUTHENTICATION') {
             // STEP 7: Challenge Required
             await handleChallenge(authResp.step_up_url, authResp.access_token, authResp.authentication_transaction_id, authReq);
@@ -514,54 +525,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleChallenge(url, jwt, txnId, authReq) {
-        return new Promise((resolve, reject) => {
-            paymentModal.classList.add('hidden');
-            challengeModal.classList.remove('hidden');
+        paymentModal.classList.add('hidden');
+        challengeModal.classList.remove('hidden');
 
-            challengeContainer.innerHTML = `
-                <form id="challenge-form" method="POST" action="${url}" target="challenge-iframe">
-                    <input type="hidden" name="JWT" value="${jwt}">
-                </form>
-                <iframe name="challenge-iframe" width="100%" height="400" border="0"></iframe>
-            `;
+        challengeContainer.innerHTML = `
+            <form id="challenge-form" method="POST" action="${url}" target="challenge-iframe">
+                <input type="hidden" name="JWT" value="${jwt}">
+            </form>
+            <iframe name="challenge-iframe" width="100%" height="500" border="0" style="border-radius: 12px; border: 1px solid var(--color-border);"></iframe>
+        `;
 
-            document.getElementById('challenge-form').submit();
+        document.getElementById('challenge-form').submit();
 
-            const challengeCompleteHandler = async () => {
-                try {
-                    // Inject the returned transaction ID into the original full auth request
-                    authReq.authentication_transaction_id = txnId;
-                    
-                    const validateResp = await fetch('/api/collection/authorize', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(authReq)
-                    });
-                    const finalData = await validateResp.json();
-                    if (finalData.status === 'AUTHORIZED') {
-                        window.location.href = `/checkout/success?ref=${currentRemittance.remittance_id}`;
-                    } else {
-                        throw new Error('3DS Validation failed');
-                    }
-                } catch (err) {
-                    showPaymentError(err.message);
-                    challengeModal.classList.add('hidden');
-                    paymentModal.classList.remove('hidden');
-                    setPaymentLoading(false);
-                }
-            };
-            // Support both direct window execution and cross-origin postMessage
-            window.onchallengecomplete = challengeCompleteHandler;
-            
-            const messageListener = (event) => {
-                if (event.data && event.data.type === 'challenge_complete') {
-                    window.removeEventListener('message', messageListener);
-                    challengeCompleteHandler();
-                }
-            };
-            window.addEventListener('message', messageListener);
-
-        });
+        // Note: No further logic needed here as the /collection/return handler 
+        // will handle the post-3DS redirect to success/error pages.
     }
 
     // ─── UI Helpers ────────────────────────────────────────────────────────

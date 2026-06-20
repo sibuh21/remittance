@@ -34,16 +34,16 @@ func NewConnection(cfg domain.Config) (*DB, error) {
 
 func (db *DB) InitializeSchema() error {
 	query := `
-	CREATE TABLE IF NOT EXISTS transactions (
-		id UUID PRIMARY KEY,
-		remittance_id VARCHAR(50) UNIQUE NOT NULL,
+	CREATE TABLE IF NOT EXISTS remittances (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		cs_transaction_id VARCHAR(50) NULL,
+		cs_authentication_transaction_id VARCHAR(50) NULL,
 		status VARCHAR(50) NOT NULL,
 		
 		sender_name VARCHAR(255) NOT NULL,
 		sender_email VARCHAR(255),
 		source_amount VARCHAR(50) NOT NULL,
 		source_currency VARCHAR(10) NOT NULL,
-		cybersource_ref VARCHAR(100),
 		collection_status VARCHAR(50),
 		
 		exchange_rate DECIMAL(18, 8) DEFAULT 0,
@@ -69,70 +69,77 @@ func (db *DB) InitializeSchema() error {
 		card_bin VARCHAR(10),
 		card_suffix VARCHAR(10),
 		card_brand VARCHAR(50),
+		expiration_month VARCHAR(10),
+		expiration_year VARCHAR(10),
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_sender_cards_email ON sender_cards(sender_email);
 	`
-	_, err := db.Conn.Exec(query)
-	return err
+	if _, err := db.Conn.Exec(query); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (db *DB) CreateTransaction(t *domain.Transaction) error {
+func (db *DB) CreateRemittance(t *domain.Remittance) error {
 	query := `
-	INSERT INTO transactions (
-		id, remittance_id, status, sender_name, sender_email, source_amount, 
+	INSERT INTO remittances (
+		id, status, sender_name, sender_email, source_amount, 
 		source_currency, exchange_rate, target_amount, target_currency, 
 		receiver_name, receiver_phone, payout_type, account_number, bank_id
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	`
-	_, err := db.Conn.Exec(query, 
-		t.ID, t.RemittanceID, t.Status, t.SenderName, t.SenderEmail, t.SourceAmount, 
-		t.SourceCurrency, t.ExchangeRate, t.TargetAmount, t.TargetCurrency, 
+	_, err := db.Conn.Exec(query,
+		t.ID, t.Status, t.SenderName, t.SenderEmail, t.SourceAmount,
+		t.SourceCurrency, t.ExchangeRate, t.TargetAmount, t.TargetCurrency,
 		t.ReceiverName, t.ReceiverPhone, t.PayoutType, t.AccountNumber, t.BankID)
+	if err != nil {
+		log.Printf("ERROR: Failed to create remittance in DB: %v", err)
+	}
 	return err
 }
 
-func (db *DB) UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error {
+func (db *DB) UpdateCollectionResult(ID, csTransactionID, csAuthTransactionID, collectionStatus, status string) error {
 	query := `
-	UPDATE transactions 
-	SET cybersource_ref = $2, collection_status = $3, status = $4, updated_at = CURRENT_TIMESTAMP
-	WHERE remittance_id = $1
+	UPDATE remittances 
+	SET cs_transaction_id = $2, cs_authentication_transaction_id = $3, collection_status = $4, status = $5, updated_at = CURRENT_TIMESTAMP
+	WHERE id = $1
 	`
-	_, err := db.Conn.Exec(query, remittanceID, cybersourceRef, collectionStatus, status)
+	_, err := db.Conn.Exec(query, ID, csTransactionID, csAuthTransactionID, collectionStatus, status)
 	return err
 }
 
-func (db *DB) UpdatePayoutResult(remittanceID, boaRef, payoutStatus, status string) error {
+func (db *DB) UpdatePayoutResult(ID, boaRef, payoutStatus, status string) error {
 	query := `
-	UPDATE transactions 
+	UPDATE remittances 
 	SET boa_reference = $2, payout_status = $3, status = $4, updated_at = CURRENT_TIMESTAMP
-	WHERE remittance_id = $1
+	WHERE id = $1
 	`
-	_, err := db.Conn.Exec(query, remittanceID, boaRef, payoutStatus, status)
+	_, err := db.Conn.Exec(query, ID, boaRef, payoutStatus, status)
 	return err
 }
 
-func (db *DB) GetTransactionByRef(ref string) (*domain.Transaction, error) {
+func (db *DB) GetRemittanceByID(id string) (*domain.Remittance, error) {
 	query := `
 	SELECT 
-		id, remittance_id, status, sender_name, COALESCE(sender_email, ''),
-		source_amount, source_currency, COALESCE(cybersource_ref, ''), COALESCE(collection_status, ''),
+		id, COALESCE(cs_transaction_id, ''), COALESCE(cs_authentication_transaction_id, ''), status, sender_name, COALESCE(sender_email, ''),
+		source_amount, source_currency, COALESCE(collection_status, ''),
 		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
 		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
 		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
 		created_at, updated_at 
-	FROM transactions 
-	WHERE remittance_id = $1 OR cybersource_ref = $1 OR id::text = $1`
-	
-	row := db.Conn.QueryRow(query, ref)
+	FROM remittances 
+	WHERE id::text = $1`
 
-	var t domain.Transaction
+	row := db.Conn.QueryRow(query, id)
+
+	var t domain.Remittance
 	err := row.Scan(
-		&t.ID, &t.RemittanceID, &t.Status, &t.SenderName, &t.SenderEmail, 
-		&t.SourceAmount, &t.SourceCurrency, &t.CybersourceRef, &t.CollectionStatus, 
-		&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName, 
-		&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID, 
+		&t.ID, &t.CsTransactionID, &t.CsAuthenticationTransactionID, &t.Status, &t.SenderName, &t.SenderEmail,
+		&t.SourceAmount, &t.SourceCurrency, &t.CollectionStatus,
+		&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName,
+		&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID,
 		&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -141,18 +148,46 @@ func (db *DB) GetTransactionByRef(ref string) (*domain.Transaction, error) {
 	return &t, nil
 }
 
-func (db *DB) GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error) {
+func (db *DB) GetRemittanceByCSAuthenticationID(authID string) (*domain.Remittance, error) {
 	query := `
 	SELECT 
-		id, remittance_id, status, sender_name, COALESCE(sender_email, ''),
-		source_amount, source_currency, COALESCE(cybersource_ref, ''), COALESCE(collection_status, ''),
+		id, COALESCE(cs_transaction_id, ''), COALESCE(cs_authentication_transaction_id, ''), status, sender_name, COALESCE(sender_email, ''),
+		source_amount, source_currency, COALESCE(collection_status, ''),
 		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
 		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
 		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
 		created_at, updated_at 
-	FROM transactions 
+	FROM remittances 
+	WHERE cs_authentication_transaction_id = $1`
+
+	row := db.Conn.QueryRow(query, authID)
+
+	var t domain.Remittance
+	err := row.Scan(
+		&t.ID, &t.CsTransactionID, &t.CsAuthenticationTransactionID, &t.Status, &t.SenderName, &t.SenderEmail,
+		&t.SourceAmount, &t.SourceCurrency, &t.CollectionStatus,
+		&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName,
+		&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID,
+		&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (db *DB) GetRemittancesBySender(email string, status string) ([]*domain.Remittance, error) {
+	query := `
+	SELECT 
+		id, COALESCE(cs_transaction_id, ''), COALESCE(cs_authentication_transaction_id, ''), status, sender_name, COALESCE(sender_email, ''),
+		source_amount, source_currency, COALESCE(collection_status, ''),
+		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
+		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
+		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
+		created_at, updated_at 
+	FROM remittances 
 	WHERE sender_email = $1`
-	
+
 	args := []any{email}
 	if status != "" {
 		query += " AND status = $2"
@@ -166,14 +201,14 @@ func (db *DB) GetTransactionsBySender(email string, status string) ([]*domain.Tr
 	}
 	defer rows.Close()
 
-	var txns []*domain.Transaction
+	var txns []*domain.Remittance
 	for rows.Next() {
-		var t domain.Transaction
+		var t domain.Remittance
 		err := rows.Scan(
-			&t.ID, &t.RemittanceID, &t.Status, &t.SenderName, &t.SenderEmail, 
-			&t.SourceAmount, &t.SourceCurrency, &t.CybersourceRef, &t.CollectionStatus, 
-			&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName, 
-			&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID, 
+			&t.ID, &t.CsTransactionID, &t.CsAuthenticationTransactionID, &t.Status, &t.SenderName, &t.SenderEmail,
+			&t.SourceAmount, &t.SourceCurrency, &t.CollectionStatus,
+			&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName,
+			&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID,
 			&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
 		)
 		if err != nil {
@@ -184,18 +219,18 @@ func (db *DB) GetTransactionsBySender(email string, status string) ([]*domain.Tr
 	return txns, nil
 }
 
-func (db *DB) GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error) {
+func (db *DB) GetRemittancesByReceiver(phone string, status string) ([]*domain.Remittance, error) {
 	query := `
 	SELECT 
-		id, remittance_id, status, sender_name, COALESCE(sender_email, ''),
-		source_amount, source_currency, COALESCE(cybersource_ref, ''), COALESCE(collection_status, ''),
+		id, COALESCE(cs_transaction_id, ''), COALESCE(cs_authentication_transaction_id, ''), status, sender_name, COALESCE(sender_email, ''),
+		source_amount, source_currency, COALESCE(collection_status, ''),
 		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
 		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
 		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
 		created_at, updated_at 
-	FROM transactions 
+	FROM remittances 
 	WHERE receiver_phone = $1`
-	
+
 	args := []any{phone}
 	if status != "" {
 		query += " AND status = $2"
@@ -209,14 +244,14 @@ func (db *DB) GetTransactionsByReceiver(phone string, status string) ([]*domain.
 	}
 	defer rows.Close()
 
-	var txns []*domain.Transaction
+	var txns []*domain.Remittance
 	for rows.Next() {
-		var t domain.Transaction
+		var t domain.Remittance
 		err := rows.Scan(
-			&t.ID, &t.RemittanceID, &t.Status, &t.SenderName, &t.SenderEmail, 
-			&t.SourceAmount, &t.SourceCurrency, &t.CybersourceRef, &t.CollectionStatus, 
-			&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName, 
-			&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID, 
+			&t.ID, &t.CsTransactionID, &t.CsAuthenticationTransactionID, &t.Status, &t.SenderName, &t.SenderEmail,
+			&t.SourceAmount, &t.SourceCurrency, &t.CollectionStatus,
+			&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName,
+			&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID,
 			&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
 		)
 		if err != nil {
@@ -262,4 +297,14 @@ func (db *DB) GetCardsBySenderEmail(email string) ([]*domain.SenderCard, error) 
 		cards = append(cards, &c)
 	}
 	return cards, nil
+}
+
+func (db *DB) DeleteSenderCard(tokenID string) error {
+	_, err := db.Conn.Exec("DELETE FROM sender_cards WHERE token_id = $1", tokenID)
+	return err
+}
+
+func (db *DB) UpdateSenderCardExpiration(tokenID, month, year string) error {
+	_, err := db.Conn.Exec("UPDATE sender_cards SET expiration_month = $1, expiration_year = $2 WHERE token_id = $3", month, year, tokenID)
+	return err
 }

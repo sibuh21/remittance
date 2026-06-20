@@ -1,20 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8"><title>Transfer Successful | GlobalRemit</title>
+    <meta charset="UTF-8">
+    <title>Transfer Successful | GlobalRemit</title>
     <link rel="stylesheet" href="../styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
+
 <body>
+    <script>
+        // Break out of 3DS challenge iframe if redirect happened inside it
+        if (window.top !== window.self) {
+            window.top.location.href = window.location.href;
+        }
+    </script>
     <div class="result-container">
         <div class="result-card">
             <div class="icon-box success">✓</div>
             <h1 class="card-title">Transfer Initiated!</h1>
-            <p class="card-subtitle" id="status-msg">Your payment has been processed. We are now localizing the funds to the recipient.</p>
-            
+            <p class="card-subtitle" id="status-msg">Your payment has been processed. We are now localizing the funds to
+                the recipient.</p>
+
             <div id="txn-details" class="hidden">
                 <div class="status-badge" id="payout-badge">Processing Payout</div>
-                <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; margin-bottom: 2rem; border: 1px solid var(--color-border);">
+                <div
+                    style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; margin-bottom: 2rem; border: 1px solid var(--color-border);">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
                         <span style="color: var(--color-text-dim);">Reference</span>
                         <span id="ref-id" style="font-family: monospace;">...</span>
@@ -30,11 +41,14 @@
                 </div>
             </div>
 
-            <div id="payout-status-msg" style="margin-top: 1rem; padding: 1rem; border-radius: 8px; background: rgba(99, 102, 241, 0.1); color: var(--color-primary); font-size: 0.9rem;">
-                <p id="payout-info">Automatic payout initiated. Please wait while we transfer funds to the recipient...</p>
+            <div id="payout-status-msg"
+                style="margin-top: 1rem; padding: 1rem; border-radius: 8px; background: rgba(99, 102, 241, 0.1); color: var(--color-primary); font-size: 0.9rem;">
+                <p id="payout-info">Automatic payout initiated. Please wait while we transfer funds to the recipient...
+                </p>
             </div>
 
-            <a href="/" class="submit-btn" style="text-decoration:none; display:inline-block; margin-top: 2rem;">Send Another Transfer</a>
+            <a href="/" class="submit-btn" style="text-decoration:none; display:inline-block; margin-top: 2rem;">Send
+                Another Transfer</a>
         </div>
     </div>
 
@@ -42,23 +56,24 @@
         const urlParams = new URLSearchParams(window.location.search);
         const ref = urlParams.get('ref');
         let polling = true;
-        
+
         async function checkStatus() {
             if (!ref || !polling) return;
             try {
                 const res = await fetch(`/api/remittance/status/${ref}`);
                 if (!res.ok) throw new Error("Status check failed");
                 const data = await res.json();
-                
+
                 document.getElementById('txn-details').classList.remove('hidden');
-                document.getElementById('ref-id').textContent = data.remittance_id;
+                const id = data.id || data.remittance_id;
+                document.getElementById('ref-id').textContent = id;
                 document.getElementById('target-name').textContent = data.receiver_name;
                 document.getElementById('target-amount').textContent = `${data.target_amount} ${data.target_currency || 'ETB'}`;
-                
+
                 const badge = document.getElementById('payout-badge');
                 const status = data.status || 'PROCESSING';
                 badge.textContent = status.replace(/_/g, ' ');
-                
+
                 if (status === 'COMPLETED') {
                     badge.classList.add('completed');
                     document.getElementById('status-msg').textContent = "Funds delivered successfully!";
@@ -92,4 +107,5 @@
         checkStatus();
     </script>
 </body>
+
 </html>

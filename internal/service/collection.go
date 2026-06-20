@@ -17,29 +17,35 @@ import (
 type collectionService struct {
 	csRESTClient *cybersource.RESTClient
 	db           interface {
-		CreateTransaction(t *domain.Transaction) error
-		UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
-		UpdatePayoutResult(remittanceID, boaRef, payoutStatus, status string) error
-		GetTransactionByRef(ref string) (*domain.Transaction, error)
-		GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error)
-		GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error)
+		CreateRemittance(t *domain.Remittance) error
+		UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error
+		UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
+		GetRemittanceByID(id string) (*domain.Remittance, error)
+		GetRemittanceByCSAuthenticationID(authID string) (*domain.Remittance, error)
+		GetRemittancesBySender(email string, status string) ([]*domain.Remittance, error)
+		GetRemittancesByReceiver(phone string, status string) ([]*domain.Remittance, error)
 		SaveSenderCard(card *domain.SenderCard) error
 		GetCardsBySenderEmail(email string) ([]*domain.SenderCard, error)
+		DeleteSenderCard(tokenID string) error
+		UpdateSenderCardExpiration(tokenID, month, year string) error
 	}
 	returnURL   string
-	onCollected func(remittanceID string)
+	onCollected func(id string)
 }
 
 // NewCollectionService creates a new CollectionService.
 func NewCollectionService(csRESTClient *cybersource.RESTClient, db interface {
-	CreateTransaction(t *domain.Transaction) error
-	UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
-	UpdatePayoutResult(remittanceID, boaRef, payoutStatus, status string) error
-	GetTransactionByRef(ref string) (*domain.Transaction, error)
-	GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error)
-	GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error)
+	CreateRemittance(t *domain.Remittance) error
+	UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error
+	UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
+	GetRemittanceByID(id string) (*domain.Remittance, error)
+	GetRemittanceByCSAuthenticationID(authID string) (*domain.Remittance, error)
+	GetRemittancesBySender(email string, status string) ([]*domain.Remittance, error)
+	GetRemittancesByReceiver(phone string, status string) ([]*domain.Remittance, error)
 	SaveSenderCard(card *domain.SenderCard) error
 	GetCardsBySenderEmail(email string) ([]*domain.SenderCard, error)
+	DeleteSenderCard(tokenID string) error
+	UpdateSenderCardExpiration(tokenID, month, year string) error
 }, returnURL string, onCollected func(string)) domain.CollectionService {
 	return &collectionService{
 		csRESTClient: csRESTClient,
@@ -64,7 +70,7 @@ func (s *collectionService) CreateCaptureContext(origins []string) (string, erro
 func (s *collectionService) SetupPASetup(req *domain.PASetupRequest) (*domain.PASetupResponse, error) {
 	paReq := &cybersource.PASetupRequest{
 		ClientReferenceInformation: cybersource.ClientReferenceInfo{
-			Code: req.RemittanceID,
+			Code: req.ID,
 		},
 	}
 
@@ -95,14 +101,15 @@ func (s *collectionService) SetupPASetup(req *domain.PASetupRequest) (*domain.PA
 	}
 
 	// Prefer the 3DS session ReferenceId from the auth info block;
-	// fall back to the transaction ID as a last resort.
+	// fall back to the remittance ID as a last resort.
 	refID := resp.ConsumerAuthenticationInfo.ReferenceId
 	if refID == "" {
-		log.Printf("WARN: ConsumerAuthenticationInfo.ReferenceId is empty, falling back to transaction ID")
+		log.Printf("WARN: ConsumerAuthenticationInfo.ReferenceId is empty, falling back to remittance ID")
 		refID = resp.ID
 	}
 
 	return &domain.PASetupResponse{
+		ID:                      req.ID,
 		AccessToken:             resp.ConsumerAuthenticationInfo.AccessToken,
 		DeviceDataCollectionUrl: resp.ConsumerAuthenticationInfo.DeviceDataCollectionUrl,
 		ReferenceId:             refID,
@@ -112,7 +119,7 @@ func (s *collectionService) SetupPASetup(req *domain.PASetupRequest) (*domain.PA
 func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*domain.AuthorizeResponse, error) {
 	// Step 1: Build the CyberSource REST request
 	actionList := []string{domain.ActionAuthorize, domain.ActionConsumerAuth}
-	
+
 	// If we're validating a 3DS challenge, we must use VALIDATE_CONSUMER_AUTHENTICATION instead
 	if req.AuthenticationTransactionId != "" {
 		actionList = []string{domain.ActionAuthorize, domain.ActionValidateConsumerAuth}
@@ -124,11 +131,10 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 		return nil, err
 	}
 
-	domainResp, err := s.mapPaymentResponse(resp, req.RemittanceID)
+	domainResp, err := s.mapPaymentResponse(resp, req.ID)
 	if err != nil {
 		return nil, err
 	}
-
 
 	// Update DB based on status
 	paymentToken := ""
@@ -137,7 +143,7 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 		domainResp.PaymentTokenID = paymentToken
 	}
 
-	// AUTO-SAVE CARD: Ensure tokens are saved even if transaction is flagged for review
+	// AUTO-SAVE CARD: Ensure tokens are saved even if remittance is flagged for review
 	if paymentToken != "" && req.Sender.Email != "" && (domainResp.Status == domain.CSStatusAuthorized || domainResp.Status == domain.CSStatusAuthorizedPendingReview) {
 		cardInfo := &domain.SenderCard{
 			ID:              uuid.New().String(),
@@ -159,45 +165,64 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 		_ = s.db.SaveSenderCard(cardInfo)
 	}
 
+	authID := ""
+	if resp.ConsumerAuthenticationInfo != nil {
+		authID = resp.ConsumerAuthenticationInfo.AuthenticationTransactionId
+	}
+
 	switch domainResp.Status {
 	case domain.CSStatusAuthorized:
-		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollected))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollected))
 
 		if s.onCollected != nil {
-			s.onCollected(req.RemittanceID)
+			s.onCollected(req.ID)
 		}
 	case domain.CSStatusAuthorizedPendingReview:
-		log.Printf("INFO: Remittance %s flagged for manual review", req.RemittanceID)
-		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceReviewPending))
+		log.Printf("INFO: Remittance %s flagged for manual review", req.ID)
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceReviewPending))
 	case domain.CSStatusPendingAuth:
-		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollectionPending))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollectionPending))
 	default:
-		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceFailed))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceFailed))
 	}
 
 	return domainResp, nil
 }
 
 func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*domain.AuthorizeResponse, error) {
+	// 1. Fetch remittance first to get amount/currency needed for validation
+	t, err := s.db.GetRemittanceByID(req.ID)
+	if err != nil {
+		return nil, fmt.Errorf("remittance not found for validation: %w", err)
+	}
+
 	paReq := &cybersource.PaymentRequest{
 		ClientReferenceInformation: cybersource.ClientReferenceInfo{
-			Code: req.RemittanceID,
+			Code: req.ID,
 		},
 		ProcessingInformation: cybersource.ProcessingInfo{
-			Capture:    true,
+			Capture: true,
+			// CommerceIndicator: "internet",
 			ActionList: []string{domain.ActionValidateConsumerAuth},
 		},
+		// OrderInformation: cybersource.OrderInfo{
+		// 	AmountDetails: cybersource.AmountDetails{
+		// 		TotalAmount: formatAmount(t.SourceAmount),
+		// 		Currency:    t.SourceCurrency,
+		// 	},
+		// },
 		ConsumerAuthenticationInfo: &cybersource.ConsumerAuthInfo{
 			AuthenticationTransactionId: req.AuthenticationTransactionId,
 		},
 	}
-
+	jsonData, _ := json.Marshal(paReq)
+	log.Printf("DEBUG: ValidateAndAuthorize - Request payload: %s", string(jsonData))
 	resp, err := s.csRESTClient.AuthorizePayment(paReq)
 	if err != nil {
 		return nil, err
 	}
 
-	domainResp, err := s.mapPaymentResponse(resp, req.RemittanceID)
+	domainResp, err := s.mapPaymentResponse(resp, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -208,8 +233,7 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 		domainResp.PaymentTokenID = paymentToken
 	}
 
-	// AUTO-SAVE CARD (Post-3DS): Ensure tokens are saved even if transaction is flagged for review
-	t, _ := s.db.GetTransactionByRef(req.RemittanceID)
+	// AUTO-SAVE CARD (Post-3DS): Ensure tokens are saved even if remittance is flagged for review
 	if t != nil && t.SenderEmail != "" && paymentToken != "" && (domainResp.Status == domain.CSStatusAuthorized || domainResp.Status == domain.CSStatusAuthorizedPendingReview) {
 		cardInfo := &domain.SenderCard{
 			ID:          uuid.New().String(),
@@ -224,20 +248,25 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 		_ = s.db.SaveSenderCard(cardInfo)
 	}
 
+	authID := ""
+	if resp.ConsumerAuthenticationInfo != nil {
+		authID = resp.ConsumerAuthenticationInfo.AuthenticationTransactionId
+	}
+
 	switch domainResp.Status {
 	case domain.CSStatusAuthorized:
-		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollected))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollected))
 
 		if s.onCollected != nil {
-			s.onCollected(req.RemittanceID)
+			s.onCollected(req.ID)
 		}
 	case domain.CSStatusAuthorizedPendingReview:
-		log.Printf("INFO: Remittance %s flagged for manual review (post-3DS)", req.RemittanceID)
-		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceReviewPending))
+		log.Printf("INFO: Remittance %s flagged for manual review (post-3DS)", req.ID)
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceReviewPending))
 	case domain.CSStatusPendingAuth:
-		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceCollectionPending))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollectionPending))
 	default:
-		_ = s.db.UpdateCollectionResult(req.RemittanceID, resp.ID, domainResp.Status, string(domain.RemittanceFailed))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceFailed))
 	}
 
 	return domainResp, nil
@@ -245,29 +274,29 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 
 // buildPaymentRequest constructs the CyberSource AFT payment request from domain data.
 // All dynamic values (country, address, state) come from the request — nothing is hardcoded.
-func (s *collectionService) ReviewPayment(remittanceID string, approve bool) error {
-	log.Printf("INFO: Manual review update for remittance %s - Approved: %v", remittanceID, approve)
+func (s *collectionService) ReviewPayment(id string, approve bool) error {
+	log.Printf("INFO: Manual review update for remittance %s - Approved: %v", id, approve)
 
-	// Fetch transaction to get the CyberSource reference for voiding if rejected
-	t, _ := s.db.GetTransactionByRef(remittanceID)
+	// Fetch remittance to get the CyberSource reference for voiding if rejected
+	t, _ := s.db.GetRemittanceByID(id)
 
 	if !approve {
 		// If rejected, we ideally reverse the authorization hold
-		if t != nil && t.CybersourceRef != "" {
-			_ = s.csRESTClient.ReverseAuthorization(t.CybersourceRef)
+		if t != nil && t.CsTransactionID != "" {
+			_ = s.csRESTClient.ReverseAuthorization(t.CsTransactionID)
 		}
-		return s.db.UpdateCollectionResult(remittanceID, "", "REVIEW_REJECTED", string(domain.RemittanceFailed))
+		return s.db.UpdateCollectionResult(id, "", "", "REVIEW_REJECTED", string(domain.RemittanceFailed))
 	}
 
 	// Update to COLLECTED
-	err := s.db.UpdateCollectionResult(remittanceID, "", "REVIEW_APPROVED", string(domain.RemittanceCollected))
+	err := s.db.UpdateCollectionResult(id, "", "", "REVIEW_APPROVED", string(domain.RemittanceCollected))
 	if err != nil {
 		return err
 	}
 
 	// Trigger automatic payout
 	if s.onCollected != nil {
-		go s.onCollected(remittanceID)
+		go s.onCollected(id)
 	}
 
 	return nil
@@ -279,8 +308,28 @@ func (s *collectionService) GetSenderCards(email string) ([]*domain.SenderCard, 
 	}
 	return s.db.GetCardsBySenderEmail(email)
 }
-func (s *collectionService) UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error {
-	return s.db.UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status)
+func (s *collectionService) UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error {
+	return s.db.UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status)
+}
+
+func (s *collectionService) UpdatePayoutResult(id, boaRef, payoutStatus, status string) error {
+	return s.db.UpdatePayoutResult(id, boaRef, payoutStatus, status)
+}
+
+func (s *collectionService) GetRemittanceByID(id string) (*domain.Remittance, error) {
+	return s.db.GetRemittanceByID(id)
+}
+
+func (s *collectionService) GetRemittanceByCSAuthenticationID(authID string) (*domain.Remittance, error) {
+	return s.db.GetRemittanceByCSAuthenticationID(authID)
+}
+
+func (s *collectionService) GetRemittancesBySender(email string, status string) ([]*domain.Remittance, error) {
+	return s.db.GetRemittancesBySender(email, status)
+}
+
+func (s *collectionService) GetRemittancesByReceiver(phone string, status string) ([]*domain.Remittance, error) {
+	return s.db.GetRemittancesByReceiver(phone, status)
 }
 
 func (s *collectionService) ProcessWebhook(n *domain.CyberSourceNotification) error {
@@ -292,6 +341,63 @@ func (s *collectionService) ProcessWebhook(n *domain.CyberSourceNotification) er
 
 	approve := strings.ToUpper(n.Decision) == "ACCEPT"
 	return s.ReviewPayment(n.MerchantReferenceCode, approve)
+}
+
+func (s *collectionService) ProcessCaseManagementWebhook(payload *domain.CaseManagementWebhookPayload) error {
+	log.Printf("INFO: Received Case Management Webhook - Ref: %s, Event: %s", payload.Payload.MerchantReferenceCode, payload.EventType)
+
+	if payload.Payload.MerchantReferenceCode == "" {
+		return fmt.Errorf("missing merchantReferenceCode in case management webhook")
+	}
+
+	approve := payload.EventType == "risk.casemanagement.decision.accept"
+	return s.ReviewPayment(payload.Payload.MerchantReferenceCode, approve)
+}
+
+func (s *collectionService) ProcessTSUWebhook(payload *domain.TSUWebhookPayload) error {
+	tokenID := payload.PaymentInstrument.ID
+	if tokenID == "" {
+		tokenID = payload.Token.ID
+	}
+	if tokenID == "" {
+		tokenID = payload.InstrumentIdentifier.ID
+	}
+
+	if tokenID == "" {
+		log.Printf("WARN: TSU webhook received without a valid token or instrument ID")
+		return nil
+	}
+
+	state := payload.PaymentInstrument.State
+	if state == "" {
+		state = payload.Token.State
+	}
+	if state == "" {
+		state = payload.InstrumentIdentifier.State
+	}
+	state = strings.ToUpper(state)
+
+	expMonth := payload.PaymentInstrument.Card.ExpirationMonth
+	if expMonth == "" {
+		expMonth = payload.Token.Card.ExpirationMonth
+	}
+
+	expYear := payload.PaymentInstrument.Card.ExpirationYear
+	if expYear == "" {
+		expYear = payload.Token.Card.ExpirationYear
+	}
+
+	log.Printf("INFO: Processing TSU Webhook for token: %s, state: %s", tokenID, state)
+
+	if state == "CLOSED" || state == "SUSPENDED" || state == "DELETED" {
+		return s.db.DeleteSenderCard(tokenID)
+	}
+
+	if expMonth != "" && expYear != "" {
+		return s.db.UpdateSenderCardExpiration(tokenID, expMonth, expYear)
+	}
+
+	return nil
 }
 
 func (s *collectionService) validatedState(country, state string) string {
@@ -312,7 +418,7 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 
 	creq := &cybersource.PaymentRequest{
 		ClientReferenceInformation: cybersource.ClientReferenceInfo{
-			Code: req.RemittanceID,
+			Code: req.ID,
 		},
 		ProcessingInformation: cybersource.ProcessingInfo{
 			Capture:               true,
@@ -402,7 +508,6 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 		creq.ProcessingInformation.ActionTokenTypes = []string{"paymentInstrument", "instrumentIdentifier"}
 	}
 
-
 	return creq
 }
 
@@ -454,10 +559,10 @@ func (s *collectionService) buildPaymentInfo(req *domain.AuthorizeRequest) *cybe
 	return pi
 }
 
-func (s *collectionService) mapPaymentResponse(resp *cybersource.PaymentResponse, remittanceID string) (*domain.AuthorizeResponse, error) {
+func (s *collectionService) mapPaymentResponse(resp *cybersource.PaymentResponse, id string) (*domain.AuthorizeResponse, error) {
 	domainResp := &domain.AuthorizeResponse{
-		Status:       resp.Status,
-		RemittanceID: remittanceID,
+		Status: resp.Status,
+		ID:     id,
 	}
 
 	if resp.Status == domain.CSStatusPendingAuth && resp.ConsumerAuthenticationInfo != nil {

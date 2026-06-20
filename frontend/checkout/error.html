@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><title>Error | GlobalRemit</title>
+    <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+    <script>
+        if (window.top !== window.self) {
+            window.top.location.href = window.location.href;
+        }
+    </script>
+    <div class="result-container">
+        <div class="result-card">
+            <div class="icon-box error">!</div>
+            <h1 class="card-title">Processing Error</h1>
+            <p class="card-subtitle" id="error-msg">Something went wrong while processing your payment. Please try again later.</p>
+            <a href="/" class="submit-btn" style="text-decoration:none; display:inline-block;">Back to Home</a>
+        </div>
+    </div>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const msg = urlParams.get('message');
+        if (msg) {
+            document.getElementById('error-msg').textContent = msg.replace(/_/g, ' ');
+        }
+    </script>
+</body>
+</html>

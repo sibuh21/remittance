@@ -7,18 +7,18 @@ import (
 // PaymentRequest represents the combined REST API payment request
 // with AFT (Account Funding Transaction) fields for remittance.
 type PaymentRequest struct {
-	ClientReferenceInformation ClientReferenceInfo      `json:"clientReferenceInformation"`
-	ProcessingInformation      ProcessingInfo           `json:"processingInformation"`
-	OrderInformation           OrderInfo                `json:"orderInformation"`
-	TokenInformation           *TokenInfo               `json:"tokenInformation,omitempty"`
-	PaymentInformation         *PaymentInfo             `json:"paymentInformation,omitempty"`
-	DeviceInformation          *DeviceInfo              `json:"deviceInformation,omitempty"`
-	ConsumerAuthenticationInfo *ConsumerAuthInfo         `json:"consumerAuthenticationInformation,omitempty"`
-	AcquirerInformation        *AcquirerInfo            `json:"acquirerInformation,omitempty"`
-	RecipientInformation       *RecipientInfo           `json:"recipientInformation,omitempty"`
-	SenderInformation          *SenderInfo              `json:"senderInformation,omitempty"`
-	MerchantInformation        *MerchantInfo            `json:"merchantInformation,omitempty"`
-	MerchantDefinedInfo        []MerchantDefinedField   `json:"merchantDefinedInformation,omitempty"`
+	ClientReferenceInformation ClientReferenceInfo    `json:"clientReferenceInformation"`
+	ProcessingInformation      ProcessingInfo         `json:"processingInformation"`
+	OrderInformation           OrderInfo              `json:"orderInformation,omitempty"`
+	TokenInformation           *TokenInfo             `json:"tokenInformation,omitempty"`
+	PaymentInformation         *PaymentInfo           `json:"paymentInformation,omitempty"`
+	DeviceInformation          *DeviceInfo            `json:"deviceInformation,omitempty"`
+	ConsumerAuthenticationInfo *ConsumerAuthInfo      `json:"consumerAuthenticationInformation,omitempty"`
+	AcquirerInformation        *AcquirerInfo          `json:"acquirerInformation,omitempty"`
+	RecipientInformation       *RecipientInfo         `json:"recipientInformation,omitempty"`
+	SenderInformation          *SenderInfo            `json:"senderInformation,omitempty"`
+	MerchantInformation        *MerchantInfo          `json:"merchantInformation,omitempty"`
+	MerchantDefinedInfo        []MerchantDefinedField `json:"merchantDefinedInformation,omitempty"`
 }
 
 type ClientReferenceInfo struct {
@@ -26,12 +26,12 @@ type ClientReferenceInfo struct {
 }
 
 type ProcessingInfo struct {
-	Capture              bool          `json:"capture"`
-	CommerceIndicator    string        `json:"commerceIndicator,omitempty"`
-	ActionList           []string      `json:"actionList"`
-	BusinessApplicationId string        `json:"businessApplicationId,omitempty"` // "PP" for Person-to-Person
-	ActionTokenTypes      []string      `json:"actionTokenTypes,omitempty"` // ["paymentInstrument", "instrumentIdentifier"]
-	AuthorizationOptions  *AuthOptions  `json:"authorizationOptions,omitempty"`
+	Capture               bool         `json:"capture"`
+	CommerceIndicator     string       `json:"commerceIndicator,omitempty"`
+	ActionList            []string     `json:"actionList"`
+	BusinessApplicationId string       `json:"businessApplicationId,omitempty"` // "PP" for Person-to-Person
+	ActionTokenTypes      []string     `json:"actionTokenTypes,omitempty"`      // ["paymentInstrument", "instrumentIdentifier"]
+	AuthorizationOptions  *AuthOptions `json:"authorizationOptions,omitempty"`
 }
 
 type AuthOptions struct {
@@ -59,17 +59,17 @@ type OrderInfo struct {
 }
 
 type BillTo struct {
-	FirstName    string `json:"firstName"`
-	LastName     string `json:"lastName"`
-	Email        string `json:"email"`
-	Address1     string `json:"address1"`
-	Locality     string `json:"locality"`
+	FirstName          string `json:"firstName"`
+	LastName           string `json:"lastName"`
+	Email              string `json:"email"`
+	Address1           string `json:"address1"`
+	Locality           string `json:"locality"`
 	AdministrativeArea string `json:"administrativeArea"`
 	Country            string `json:"country"`
-	PostalCode   string `json:"postalCode"`
-	PhoneNumber  string `json:"phoneNumber,omitempty"`
-	District     string `json:"district,omitempty"`
-	BuildingName string `json:"buildingNumber,omitempty"`
+	PostalCode         string `json:"postalCode"`
+	PhoneNumber        string `json:"phoneNumber,omitempty"`
+	District           string `json:"district,omitempty"`
+	BuildingName       string `json:"buildingNumber,omitempty"`
 }
 
 type AmountDetails struct {
@@ -218,10 +218,10 @@ type ConsumerAuthResponse struct {
 }
 
 type ProcessorInfo struct {
-	ApprovalCode          string `json:"approvalCode,omitempty"`
-	ResponseCode          string `json:"responseCode,omitempty"`
-	NetworkTransactionId  string `json:"networkTransactionId,omitempty"`
-	TransactionId         string `json:"transactionId,omitempty"`
+	ApprovalCode         string `json:"approvalCode,omitempty"`
+	ResponseCode         string `json:"responseCode,omitempty"`
+	NetworkTransactionId string `json:"networkTransactionId,omitempty"`
+	TransactionId        string `json:"transactionId,omitempty"`
 }
 
 type OrderInfoResponse struct {
@@ -274,7 +274,13 @@ type PASetupPaymentInfo struct {
 }
 
 type PASetupResponse struct {
-	ID                         string                `json:"id"`
-	Status                     string                `json:"status"`
+	ID                         string               `json:"id"`
+	Status                     string               `json:"status"`
 	ConsumerAuthenticationInfo ConsumerAuthResponse `json:"consumerAuthenticationInformation"`
+}
+
+type ThreeDSReturnForm struct {
+	TransactionID string `form:"TransactionId"`
+	Response      string `form:"Response"`
+	MD            string `form:"MD"`
 }

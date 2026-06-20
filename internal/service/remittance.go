@@ -16,12 +16,12 @@ type remittanceService struct {
 	collectionSvc domain.CollectionService
 	payoutSvc     domain.PayoutService
 	db            interface {
-		CreateTransaction(t *domain.Transaction) error
-		UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
-		UpdatePayoutResult(remittanceID, boaRef, payoutStatus, status string) error
-		GetTransactionByRef(ref string) (*domain.Transaction, error)
-		GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error)
-		GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error)
+		CreateRemittance(t *domain.Remittance) error
+		UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error
+		UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
+		GetRemittanceByID(id string) (*domain.Remittance, error)
+		GetRemittancesBySender(email string, status string) ([]*domain.Remittance, error)
+		GetRemittancesByReceiver(phone string, status string) ([]*domain.Remittance, error)
 	}
 	targetOrigins []string
 }
@@ -31,12 +31,12 @@ func NewRemittanceService(
 	collectionSvc domain.CollectionService,
 	payoutSvc domain.PayoutService,
 	db interface {
-		CreateTransaction(t *domain.Transaction) error
-		UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
-		UpdatePayoutResult(remittanceID, boaRef, payoutStatus, status string) error
-		GetTransactionByRef(ref string) (*domain.Transaction, error)
-		GetTransactionsBySender(email string, status string) ([]*domain.Transaction, error)
-		GetTransactionsByReceiver(phone string, status string) ([]*domain.Transaction, error)
+		CreateRemittance(t *domain.Remittance) error
+		UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error
+		UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
+		GetRemittanceByID(id string) (*domain.Remittance, error)
+		GetRemittancesBySender(email string, status string) ([]*domain.Remittance, error)
+		GetRemittancesByReceiver(phone string, status string) ([]*domain.Remittance, error)
 	},
 	targetOrigins []string,
 ) domain.RemittanceService {
@@ -53,16 +53,12 @@ func NewRemittanceService(
 // 2. Validate the beneficiary via BoA (MOCKED)
 // 3. Fetch exchange rate (MOCKED)
 // 4. Generate CyberSource signed fields for collection
-// 5. Record the transaction in DB
+// 5. Record the remittance in DB
 func (s *remittanceService) InitiateRemittance(req *domain.RemittanceRequest) (*domain.RemittanceResponse, error) {
 	// 1. Validate request
 	if err := req.Validate(); err != nil {
 		return nil, domain.NewAppError(http.StatusBadRequest, "validation failed", err.Error())
 	}
-
-	remittanceID := uuid.New().String()
-	log.Printf("INFO: Initiating remittance %s - %s %s from %s to %s (%s)",
-		remittanceID, req.SendAmount, req.SendCurrency, req.SenderName, req.ReceiverName, req.PayoutType)
 
 	// 2. Validate the beneficiary
 	accountOrPhone := req.AccountNumber
@@ -112,10 +108,10 @@ func (s *remittanceService) InitiateRemittance(req *domain.RemittanceRequest) (*
 		return nil, domain.NewAppError(http.StatusInternalServerError, "payment system error", "unable to initialize secure card entry")
 	}
 
-	// 5. Record the transaction in DB
-	txn := &domain.Transaction{
-		ID:             uuid.New().String(),
-		RemittanceID:   remittanceID,
+	ID := uuid.New().String()
+	// 5. Record the remittance in DB
+	rem := &domain.Remittance{
+		ID:             ID,
 		Status:         domain.RemittanceCollectionPending,
 		SenderName:     req.SenderName,
 		SenderEmail:    req.SenderEmail,
@@ -133,112 +129,112 @@ func (s *remittanceService) InitiateRemittance(req *domain.RemittanceRequest) (*
 		UpdatedAt:      time.Now().UTC(),
 	}
 
-	if err := s.db.CreateTransaction(txn); err != nil {
-		log.Printf("ERROR: Failed to record transaction: %v", err)
+	if err := s.db.CreateRemittance(rem); err != nil {
+		log.Printf("ERROR: Failed to record remittance: %v", err)
 		return nil, domain.NewAppError(http.StatusInternalServerError, "database error", "failed to save remittance record")
 	}
 
 	return &domain.RemittanceResponse{
-		RemittanceID:   remittanceID,
+		ID:             ID,
 		Status:         domain.RemittanceCollectionPending,
 		SendAmount:     req.SendAmount,
 		SendCurrency:   req.SendCurrency,
 		ExchangeRate:   exchangeRate,
 		ReceiveAmount:  receiveAmount,
 		CaptureContext: captureContext,
-		Message:        fmt.Sprintf("Remittance initiated. Beneficiary: %s. Proceed to payment.", beneficiary.Name),
+		Message:        fmt.Sprintf("Remittance initiated (vID). Beneficiary: %s. Proceed to payment.", beneficiary.Name),
 		CreatedAt:      time.Now().UTC(),
 	}, nil
 }
 
 // ExecutePayout executes the outbound payout leg for a completed collection.
-func (s *remittanceService) ExecutePayout(remittanceID string) (*domain.PayoutResult, error) {
-	log.Printf("INFO: Executing payout for remittance %s", remittanceID)
+func (s *remittanceService) ExecutePayout(id string) (*domain.PayoutResult, error) {
+	log.Printf("INFO: Executing payout for remittance %s", id)
 
-	// 1. Retrieve transaction from DB
-	txn, err := s.db.GetTransactionByRef(remittanceID)
+	// 1. Retrieve remittance from DB
+	rem, err := s.db.GetRemittanceByID(id)
 	if err != nil {
-		log.Printf("ERROR: Payout failed - transaction not found: %s", remittanceID)
-		return nil, domain.NewAppError(http.StatusNotFound, "not found", "remittance transaction not found")
+		log.Printf("ERROR: Payout failed - remittance not found: %s", id)
+		return nil, domain.NewAppError(http.StatusNotFound, "not found", "remittance not found")
 	}
 
-	// 2. Check if transaction is in COLLECTED state
-	if txn.Status != domain.RemittanceCollected {
-		log.Printf("ERROR: Payout failed - invalid status %s for %s. Only COLLECTED remittances can be paid out.", txn.Status, remittanceID)
-		return nil, domain.NewAppError(http.StatusBadRequest, "invalid status", fmt.Sprintf("cannot payout remittance in %s state", txn.Status))
+	// 2. Check if remittance is in COLLECTED state
+	if rem.Status != domain.RemittanceCollected {
+		log.Printf("ERROR: Payout failed - invalid status %s for %s. Only COLLECTED remittances can be paid out.", rem.Status, id)
+		return nil, domain.NewAppError(http.StatusBadRequest, "invalid status", fmt.Sprintf("cannot payout remittance in %s state", rem.Status))
 	}
 
 	// 3. Update status to PROCESSING
-	_ = s.db.UpdatePayoutResult(remittanceID, "", "PROCESSING", string(domain.RemittancePayoutProcessing))
+	_ = s.db.UpdatePayoutResult(id, "", "PROCESSING", string(domain.RemittancePayoutProcessing))
 
 	// 4. Dispatch payout (calls mocked service)
 	var payoutResult *domain.PayoutResult
 	var payoutErr error
 
-	switch txn.PayoutType {
+	switch rem.PayoutType {
 	case domain.PayoutWithinBoA:
-		payoutResult, payoutErr = s.payoutSvc.TransferWithinBoA(txn.TargetAmount, txn.AccountNumber, remittanceID)
+		payoutResult, payoutErr = s.payoutSvc.TransferWithinBoA(rem.TargetAmount, rem.AccountNumber, id)
 	case domain.PayoutOtherBank:
-		payoutResult, payoutErr = s.payoutSvc.TransferOtherBank(txn.TargetAmount, txn.BankID, txn.AccountNumber, txn.ReceiverName, remittanceID)
+		payoutResult, payoutErr = s.payoutSvc.TransferOtherBank(rem.TargetAmount, rem.BankID, rem.AccountNumber, rem.ReceiverName, id)
 	case domain.PayoutTelebirr, domain.PayoutMpesa:
-		provider := string(txn.PayoutType)
-		payoutResult, payoutErr = s.payoutSvc.TransferWallet(txn.TargetAmount, txn.ReceiverPhone, provider, txn.ReceiverName, txn.SenderName, txn.ReceiverPhone, remittanceID)
+		provider := string(rem.PayoutType)
+		payoutResult, payoutErr = s.payoutSvc.TransferWallet(rem.TargetAmount, rem.ReceiverPhone, provider, rem.ReceiverName, rem.SenderName, rem.ReceiverPhone, id)
 	default:
-		payoutErr = fmt.Errorf("unknown payout type: %s", txn.PayoutType)
+		payoutErr = fmt.Errorf("unknown payout type: %s", rem.PayoutType)
 	}
 
 	if payoutErr != nil {
-		log.Printf("ERROR: Payout failed for %s: %v", remittanceID, payoutErr)
-		_ = s.db.UpdatePayoutResult(remittanceID, "", "FAILED", string(domain.RemittanceFailed))
+		log.Printf("ERROR: Payout failed for %s: %v", id, payoutErr)
+		_ = s.db.UpdatePayoutResult(id, "", "FAILED", string(domain.RemittanceFailed))
 		return nil, payoutErr
 	}
 
 	// 5. Update status to COMPLETED
-	_ = s.db.UpdatePayoutResult(remittanceID, payoutResult.BoAReference, payoutResult.Status, string(domain.RemittanceCompleted))
+	_ = s.db.UpdatePayoutResult(id, payoutResult.BoAReference, payoutResult.Status, string(domain.RemittanceCompleted))
 
 	return payoutResult, nil
 }
 
 // TriggerManualPayout implements domain.RemittanceService.
 func (s *remittanceService) TriggerManualPayout(req *domain.ManualPayoutRequest) (*domain.PayoutResult, error) {
-	log.Printf("INFO: Manual payout trigger requested - ID: %s, Phone: %s", req.RemittanceID, req.Phone)
+	log.Printf("INFO: Manual payout trigger requested - ID: %s, Phone: %s", req.ID, req.Phone)
 
-	var txn *domain.Transaction
+	var rem *domain.Remittance
 	var err error
 
-	// 1. Find the transaction
-	if req.RemittanceID != "" {
-		txn, err = s.db.GetTransactionByRef(req.RemittanceID)
+	// 1. Find the remittance
+	if req.ID != "" {
+		rem, err = s.db.GetRemittanceByID(req.ID)
 		if err != nil {
-			return nil, domain.NewAppError(http.StatusNotFound, "not found", "remittance transaction not found")
+			return nil, domain.NewAppError(http.StatusNotFound, "not found", "remittance not found")
 		}
-		if req.Phone != "" && txn.ReceiverPhone != req.Phone {
+		if req.Phone != "" && rem.ReceiverPhone != req.Phone {
 			return nil, domain.NewAppError(http.StatusUnauthorized, "verification failed", "phone number does not match record")
 		}
 	} else if req.Phone != "" {
-		txns, err := s.db.GetTransactionsByReceiver(req.Phone, string(domain.RemittanceCollected))
+		rems, err := s.db.GetRemittancesByReceiver(req.Phone, string(domain.RemittanceCollected))
 		if err != nil {
-			return nil, domain.NewAppError(http.StatusInternalServerError, "database error", "failed to lookup transactions")
+			return nil, domain.NewAppError(http.StatusInternalServerError, "database error", "failed to lookup remittances")
 		}
-		if len(txns) == 0 {
+		if len(rems) == 0 {
 			return nil, domain.NewAppError(http.StatusNotFound, "not found", "no collected remittances found")
 		}
-		txn = txns[0]
+		rem = rems[0]
 	} else {
 		return nil, domain.NewAppError(http.StatusBadRequest, "invalid request", "either remittance_id or phone is required")
 	}
 
-	return s.ExecutePayout(txn.RemittanceID)
+	return s.ExecutePayout(rem.ID)
 }
 
-func (s *remittanceService) GetTransactionStatus(id string) (*domain.Transaction, error) {
-	return s.db.GetTransactionByRef(id)
+func (s *remittanceService) GetRemittanceStatus(id string) (*domain.Remittance, error) {
+	return s.db.GetRemittanceByID(id)
 }
 
-func (s *remittanceService) GetSenderRemittances(email string, status domain.RemittanceStatus) ([]*domain.Transaction, error) {
-	return s.db.GetTransactionsBySender(email, string(status))
+func (s *remittanceService) GetSenderRemittances(email string, status domain.RemittanceStatus) ([]*domain.Remittance, error) {
+	return s.db.GetRemittancesBySender(email, string(status))
 }
 
-func (s *remittanceService) GetReceiverRemittances(phone string, status domain.RemittanceStatus) ([]*domain.Transaction, error) {
-	return s.db.GetTransactionsByReceiver(phone, string(status))
+func (s *remittanceService) GetReceiverRemittances(phone string, status domain.RemittanceStatus) ([]*domain.Remittance, error) {
+	return s.db.GetRemittancesByReceiver(phone, string(status))
 }
