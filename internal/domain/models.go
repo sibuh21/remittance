@@ -515,10 +515,19 @@ type Remittance struct {
 
 	// Inbound (Card Collection)
 	SenderName       string `json:"sender_name"`
+	SenderFirstName  string `json:"sender_first_name"`
+	SenderLastName   string `json:"sender_last_name"`
 	SenderEmail      string `json:"sender_email"`
+	SenderAddress    string `json:"sender_address"`
+	SenderCity       string `json:"sender_city"`
+	SenderState      string `json:"sender_state"`
+	SenderPostalCode string `json:"sender_postal_code"`
+	SenderCountry    string `json:"sender_country"`
 	SourceAmount     string `json:"source_amount"`
 	SourceCurrency   string `json:"source_currency"`
 	CollectionStatus string `json:"collection_status,omitempty"`
+	PaymentTokenID   string `json:"payment_token_id,omitempty"`
+	TransientTokenJWT string `json:"transient_token_jwt,omitempty"`
 
 	// Conversion
 	ExchangeRate   float64 `json:"exchange_rate"`
@@ -554,7 +563,7 @@ type CollectionService interface {
 	ProcessTSUWebhook(payload *TSUWebhookPayload) error
 	ProcessCaseManagementWebhook(payload *CaseManagementWebhookPayload) error
 	GetSenderCards(email string) ([]*SenderCard, error)
-	UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error
+	UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status, paymentTokenID, transientTokenJWT string) error
 	UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
 	GetRemittanceByID(id string) (*Remittance, error)
 	GetRemittanceByCSAuthenticationID(authID string) (*Remittance, error)

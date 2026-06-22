@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"remittance-service/internal/domain"
@@ -17,7 +18,7 @@ type remittanceService struct {
 	payoutSvc     domain.PayoutService
 	db            interface {
 		CreateRemittance(t *domain.Remittance) error
-		UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error
+		UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status, paymentTokenID, transientTokenJWT string) error
 		UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
 		GetRemittanceByID(id string) (*domain.Remittance, error)
 		GetRemittancesBySender(email string, status string) ([]*domain.Remittance, error)
@@ -32,7 +33,7 @@ func NewRemittanceService(
 	payoutSvc domain.PayoutService,
 	db interface {
 		CreateRemittance(t *domain.Remittance) error
-		UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error
+		UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status, paymentTokenID, transientTokenJWT string) error
 		UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
 		GetRemittanceByID(id string) (*domain.Remittance, error)
 		GetRemittancesBySender(email string, status string) ([]*domain.Remittance, error)
@@ -109,24 +110,40 @@ func (s *remittanceService) InitiateRemittance(req *domain.RemittanceRequest) (*
 	}
 
 	ID := uuid.New().String()
+
+	// Split name for CyberSource compatibility
+	nameParts := strings.SplitN(req.SenderName, " ", 2)
+	firstName := nameParts[0]
+	lastName := ""
+	if len(nameParts) > 1 {
+		lastName = nameParts[1]
+	}
+
 	// 5. Record the remittance in DB
 	rem := &domain.Remittance{
-		ID:             ID,
-		Status:         domain.RemittanceCollectionPending,
-		SenderName:     req.SenderName,
-		SenderEmail:    req.SenderEmail,
-		SourceAmount:   req.SendAmount,
-		SourceCurrency: req.SendCurrency,
-		ExchangeRate:   exchangeRate,
-		TargetAmount:   receiveAmount,
-		TargetCurrency: targetCurrency,
-		ReceiverName:   req.ReceiverName,
-		ReceiverPhone:  req.ReceiverPhone,
-		PayoutType:     req.PayoutType,
-		AccountNumber:  req.AccountNumber,
-		BankID:         req.BankID,
-		CreatedAt:      time.Now().UTC(),
-		UpdatedAt:      time.Now().UTC(),
+		ID:               ID,
+		Status:           domain.RemittanceCollectionPending,
+		SenderName:       req.SenderName,
+		SenderFirstName:  firstName,
+		SenderLastName:   lastName,
+		SenderEmail:      req.SenderEmail,
+		SenderAddress:    req.SenderAddress,
+		SenderCity:       req.SenderCity,
+		SenderState:      req.SenderState,
+		SenderPostalCode: req.SenderPostal,
+		SenderCountry:    req.SenderCountry,
+		SourceAmount:     req.SendAmount,
+		SourceCurrency:   req.SendCurrency,
+		ExchangeRate:     exchangeRate,
+		TargetAmount:     receiveAmount,
+		TargetCurrency:   targetCurrency,
+		ReceiverName:     req.ReceiverName,
+		ReceiverPhone:    req.ReceiverPhone,
+		PayoutType:       req.PayoutType,
+		AccountNumber:    req.AccountNumber,
+		BankID:           req.BankID,
+		CreatedAt:        time.Now().UTC(),
+		UpdatedAt:        time.Now().UTC(),
 	}
 
 	if err := s.db.CreateRemittance(rem); err != nil {

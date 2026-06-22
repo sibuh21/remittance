@@ -18,7 +18,7 @@ type collectionService struct {
 	csRESTClient *cybersource.RESTClient
 	db           interface {
 		CreateRemittance(t *domain.Remittance) error
-		UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error
+		UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status, paymentTokenID, transientTokenJWT string) error
 		UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
 		GetRemittanceByID(id string) (*domain.Remittance, error)
 		GetRemittanceByCSAuthenticationID(authID string) (*domain.Remittance, error)
@@ -28,6 +28,7 @@ type collectionService struct {
 		GetCardsBySenderEmail(email string) ([]*domain.SenderCard, error)
 		DeleteSenderCard(tokenID string) error
 		UpdateSenderCardExpiration(tokenID, month, year string) error
+		GetCardByToken(tokenID string) (*domain.SenderCard, error)
 	}
 	returnURL   string
 	onCollected func(id string)
@@ -36,7 +37,7 @@ type collectionService struct {
 // NewCollectionService creates a new CollectionService.
 func NewCollectionService(csRESTClient *cybersource.RESTClient, db interface {
 	CreateRemittance(t *domain.Remittance) error
-	UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error
+	UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status, paymentTokenID, transientTokenJWT string) error
 	UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
 	GetRemittanceByID(id string) (*domain.Remittance, error)
 	GetRemittanceByCSAuthenticationID(authID string) (*domain.Remittance, error)
@@ -46,6 +47,7 @@ func NewCollectionService(csRESTClient *cybersource.RESTClient, db interface {
 	GetCardsBySenderEmail(email string) ([]*domain.SenderCard, error)
 	DeleteSenderCard(tokenID string) error
 	UpdateSenderCardExpiration(tokenID, month, year string) error
+	GetCardByToken(tokenID string) (*domain.SenderCard, error)
 }, returnURL string, onCollected func(string)) domain.CollectionService {
 	return &collectionService{
 		csRESTClient: csRESTClient,
@@ -117,6 +119,30 @@ func (s *collectionService) SetupPASetup(req *domain.PASetupRequest) (*domain.PA
 }
 
 func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*domain.AuthorizeResponse, error) {
+	// If sender info is missing (common for saved-card checkouts), fetch from DB
+	if req.Sender.FirstName == "" || req.Sender.Address == "" {
+		t, err := s.db.GetRemittanceByID(req.ID)
+		if err == nil && t != nil {
+			req.Sender = domain.RemittanceParty{
+				FirstName:          t.SenderFirstName,
+				LastName:           t.SenderLastName,
+				Email:              t.SenderEmail,
+				Address:            t.SenderAddress,
+				City:               t.SenderCity,
+				AdministrativeArea: t.SenderState,
+				PostalCode:         t.SenderPostalCode,
+				Country:            t.SenderCountry,
+			}
+			req.Recipient = domain.RemittanceParty{
+				FirstName: t.ReceiverName,
+				Address:   t.SenderAddress, // Recipient info recovery if needed
+				Country:   t.TargetCurrency, // Recipient info recovery if needed
+			}
+			req.Amount = t.SourceAmount
+			req.Currency = t.SourceCurrency
+		}
+	}
+
 	// Step 1: Build the CyberSource REST request
 	actionList := []string{domain.ActionAuthorize, domain.ActionConsumerAuth}
 
@@ -126,6 +152,8 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 	}
 
 	paReq := s.buildPaymentRequest(req, actionList)
+	jsonData, _ := json.Marshal(paReq)
+	log.Printf("DEBUG: CyberSource Request (%s): %s", req.ID, string(jsonData))
 	resp, err := s.csRESTClient.AuthorizePayment(paReq)
 	if err != nil {
 		return nil, err
@@ -137,14 +165,20 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 	}
 
 	// Update DB based on status
-	paymentToken := ""
-	if resp.TokenInformation != nil && resp.TokenInformation.InstrumentIdentifier != nil {
-		paymentToken = resp.TokenInformation.InstrumentIdentifier.ID
+	paymentToken := req.PermanentTokenID
+	if resp.TokenInformation != nil {
+		if resp.TokenInformation.InstrumentIdentifier != nil {
+			paymentToken = resp.TokenInformation.InstrumentIdentifier.ID
+		} else if resp.TokenInformation.PaymentInstrument != nil {
+			paymentToken = resp.TokenInformation.PaymentInstrument.ID
+		} else if resp.TokenInformation.Customer != nil {
+			paymentToken = resp.TokenInformation.Customer.ID
+		}
 		domainResp.PaymentTokenID = paymentToken
 	}
 
-	// AUTO-SAVE CARD: Ensure tokens are saved even if remittance is flagged for review
-	if paymentToken != "" && req.Sender.Email != "" && (domainResp.Status == domain.CSStatusAuthorized || domainResp.Status == domain.CSStatusAuthorizedPendingReview) {
+	// AUTO-SAVE CARD: Ensure tokens are saved. We save even on PENDING_AUTH to capture expiration/suffix from the original request.
+	if paymentToken != "" && req.Sender.Email != "" && (domainResp.Status == domain.CSStatusAuthorized || domainResp.Status == domain.CSStatusAuthorizedPendingReview || domainResp.Status == domain.CSStatusPendingAuth) {
 		cardInfo := &domain.SenderCard{
 			ID:              uuid.New().String(),
 			SenderEmail:     req.Sender.Email,
@@ -155,12 +189,22 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 		if resp.PaymentInformation != nil && resp.PaymentInformation.Card != nil {
 			cardInfo.CardBIN = resp.PaymentInformation.Card.Bin
 			cardInfo.CardSuffix = resp.PaymentInformation.Card.Suffix
-			if cardInfo.CardSuffix == "" && req.TransientTokenJWT != "" {
-				cardInfo.CardSuffix = extractSuffixFromJWT(req.TransientTokenJWT)
+			if (cardInfo.CardSuffix == "" || cardInfo.ExpirationMonth == "") && req.TransientTokenJWT != "" {
+				sfx, mm, yy := extractCardDetailsFromJWT(req.TransientTokenJWT)
+				if cardInfo.CardSuffix == "" {
+					cardInfo.CardSuffix = sfx
+				}
+				if cardInfo.ExpirationMonth == "" {
+					cardInfo.ExpirationMonth = mm
+					cardInfo.ExpirationYear = yy
+				}
 			}
 			cardInfo.CardBrand = resp.PaymentInformation.Card.Type
 		} else if req.TransientTokenJWT != "" {
-			cardInfo.CardSuffix = extractSuffixFromJWT(req.TransientTokenJWT)
+			sfx, mm, yy := extractCardDetailsFromJWT(req.TransientTokenJWT)
+			cardInfo.CardSuffix = sfx
+			cardInfo.ExpirationMonth = mm
+			cardInfo.ExpirationYear = yy
 		}
 		_ = s.db.SaveSenderCard(cardInfo)
 	}
@@ -172,18 +216,18 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 
 	switch domainResp.Status {
 	case domain.CSStatusAuthorized:
-		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollected))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollected), paymentToken, req.TransientTokenJWT)
 
 		if s.onCollected != nil {
 			s.onCollected(req.ID)
 		}
 	case domain.CSStatusAuthorizedPendingReview:
 		log.Printf("INFO: Remittance %s flagged for manual review", req.ID)
-		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceReviewPending))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceReviewPending), paymentToken, req.TransientTokenJWT)
 	case domain.CSStatusPendingAuth:
-		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollectionPending))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollectionPending), paymentToken, req.TransientTokenJWT)
 	default:
-		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceFailed))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceFailed), paymentToken, req.TransientTokenJWT)
 	}
 
 	return domainResp, nil
@@ -196,25 +240,105 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 		return nil, fmt.Errorf("remittance not found for validation: %w", err)
 	}
 
+	senderAlpha2 := func() string {
+		a2, _ := domain.GetCountryCodes(t.SenderCountry)
+		return a2
+	}()
+
 	paReq := &cybersource.PaymentRequest{
 		ClientReferenceInformation: cybersource.ClientReferenceInfo{
 			Code: req.ID,
 		},
 		ProcessingInformation: cybersource.ProcessingInfo{
 			Capture: true,
-			// CommerceIndicator: "internet",
-			ActionList: []string{domain.ActionValidateConsumerAuth},
+			ActionList: func() []string {
+				list := []string{domain.ActionAuthorize, domain.ActionValidateConsumerAuth}
+				if t.PaymentTokenID == "" {
+					list = append(list, domain.ActionTokenCreate)
+				}
+				return list
+			}(),
+			ActionTokenTypes: func() []string {
+				if t.PaymentTokenID == "" {
+					return []string{"instrumentIdentifier", "paymentInstrument"}
+				}
+				return nil
+			}(),
+			BusinessApplicationId: domain.BusinessAppIDPersonToPerson,
+			AuthorizationOptions: &cybersource.AuthOptions{
+				AFTIndicator: "true",
+				FundingOptions: &cybersource.FundingOptions{
+					Initiator: &cybersource.FundingInitiator{Type: domain.FundingInitiatorSender},
+				},
+				Initiator: func() *cybersource.Initiator {
+					if t.PaymentTokenID != "" {
+						return &cybersource.Initiator{
+							Type:                 "customer",
+							StoredCredentialUsed: "true",
+						}
+					}
+					return nil
+				}(),
+			},
 		},
-		// OrderInformation: cybersource.OrderInfo{
-		// 	AmountDetails: cybersource.AmountDetails{
-		// 		TotalAmount: formatAmount(t.SourceAmount),
-		// 		Currency:    t.SourceCurrency,
-		// 	},
-		// },
-		ConsumerAuthenticationInfo: &cybersource.ConsumerAuthInfo{
-			AuthenticationTransactionId: req.AuthenticationTransactionId,
+		OrderInformation: cybersource.OrderInfo{
+			BillTo: &cybersource.BillTo{
+				FirstName:          t.SenderFirstName,
+				LastName:           t.SenderLastName,
+				Email:              t.SenderEmail,
+				Address1:           t.SenderAddress,
+				Locality:           t.SenderCity,
+				AdministrativeArea: t.SenderState,
+				PostalCode:         t.SenderPostalCode,
+				Country:            senderAlpha2,
+			},
+			AmountDetails: cybersource.AmountDetails{
+				TotalAmount: formatAmount(t.SourceAmount),
+				Currency:    t.SourceCurrency,
+			},
 		},
 	}
+
+	if t.PaymentTokenID != "" {
+		// Use stored permanent token
+		paReq.PaymentInformation = &cybersource.PaymentInfo{
+			InstrumentIdentifier: &cybersource.TMSReference{ID: t.PaymentTokenID},
+		}
+
+		// Recover expiration from sender_cards table
+		card, err := s.db.GetCardByToken(t.PaymentTokenID)
+		if err == nil && card != nil {
+			paReq.PaymentInformation.Card = &cybersource.CardInfo{
+				ExpirationMonth: card.ExpirationMonth,
+				ExpirationYear:  card.ExpirationYear,
+			}
+		}
+	} else if t.TransientTokenJWT != "" {
+		paReq.TokenInformation = &cybersource.TokenInfo{
+			TransientTokenJWT: t.TransientTokenJWT,
+		}
+	}
+
+	paReq.ConsumerAuthenticationInfo = &cybersource.ConsumerAuthInfo{
+		AuthenticationTransactionId: req.AuthenticationTransactionId,
+	}
+
+	paReq.SenderInformation = &cybersource.SenderInfo{
+		FirstName:          t.SenderFirstName,
+		LastName:           t.SenderLastName,
+		Address1:           t.SenderAddress,
+		Locality:           t.SenderCity,
+		AdministrativeArea: t.SenderState,
+		CountryCode:        senderAlpha2,
+		PostalCode:         t.SenderPostalCode,
+	}
+	paReq.RecipientInformation = &cybersource.RecipientInfo{
+		FirstName: t.ReceiverName,
+		Address1:  t.SenderAddress, // Recipient address recovery fallback
+		Country:   "ET",            // Alpha-2 for ETH
+		PostalCode: "1000",
+	}
+
 	jsonData, _ := json.Marshal(paReq)
 	log.Printf("DEBUG: ValidateAndAuthorize - Request payload: %s", string(jsonData))
 	resp, err := s.csRESTClient.AuthorizePayment(paReq)
@@ -227,46 +351,68 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 		return nil, err
 	}
 
-	paymentToken := ""
-	if resp.TokenInformation != nil && resp.TokenInformation.InstrumentIdentifier != nil {
-		paymentToken = resp.TokenInformation.InstrumentIdentifier.ID
+	paymentToken := t.PaymentTokenID
+	if resp.TokenInformation != nil {
+		if resp.TokenInformation.InstrumentIdentifier != nil {
+			paymentToken = resp.TokenInformation.InstrumentIdentifier.ID
+		} else if resp.TokenInformation.PaymentInstrument != nil {
+			paymentToken = resp.TokenInformation.PaymentInstrument.ID
+		} else if resp.TokenInformation.Customer != nil {
+			paymentToken = resp.TokenInformation.Customer.ID
+		}
 		domainResp.PaymentTokenID = paymentToken
 	}
 
-	// AUTO-SAVE CARD (Post-3DS): Ensure tokens are saved even if remittance is flagged for review
+	// AUTO-SAVE CARD (Post-3DS): Update the card record if we found a permanent token.
 	if t != nil && t.SenderEmail != "" && paymentToken != "" && (domainResp.Status == domain.CSStatusAuthorized || domainResp.Status == domain.CSStatusAuthorizedPendingReview) {
 		cardInfo := &domain.SenderCard{
 			ID:          uuid.New().String(),
 			SenderEmail: t.SenderEmail,
 			TokenID:     paymentToken,
 		}
+		
 		if resp.PaymentInformation != nil && resp.PaymentInformation.Card != nil {
 			cardInfo.CardBIN = resp.PaymentInformation.Card.Bin
 			cardInfo.CardSuffix = resp.PaymentInformation.Card.Suffix
+			if (cardInfo.CardSuffix == "" || cardInfo.ExpirationMonth == "") && t.TransientTokenJWT != "" {
+				sfx, mm, yy := extractCardDetailsFromJWT(t.TransientTokenJWT)
+				if cardInfo.CardSuffix == "" {
+					cardInfo.CardSuffix = sfx
+				}
+				if cardInfo.ExpirationMonth == "" {
+					cardInfo.ExpirationMonth = mm
+					cardInfo.ExpirationYear = yy
+				}
+			}
 			cardInfo.CardBrand = resp.PaymentInformation.Card.Type
+		} else if t.TransientTokenJWT != "" {
+			sfx, mm, yy := extractCardDetailsFromJWT(t.TransientTokenJWT)
+			cardInfo.CardSuffix = sfx
+			cardInfo.ExpirationMonth = mm
+			cardInfo.ExpirationYear = yy
 		}
 		_ = s.db.SaveSenderCard(cardInfo)
 	}
 
-	authID := ""
-	if resp.ConsumerAuthenticationInfo != nil {
+	authID := req.AuthenticationTransactionId
+	if resp.ConsumerAuthenticationInfo != nil && resp.ConsumerAuthenticationInfo.AuthenticationTransactionId != "" {
 		authID = resp.ConsumerAuthenticationInfo.AuthenticationTransactionId
 	}
 
 	switch domainResp.Status {
 	case domain.CSStatusAuthorized:
-		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollected))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollected), paymentToken, t.TransientTokenJWT)
 
 		if s.onCollected != nil {
 			s.onCollected(req.ID)
 		}
 	case domain.CSStatusAuthorizedPendingReview:
 		log.Printf("INFO: Remittance %s flagged for manual review (post-3DS)", req.ID)
-		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceReviewPending))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceReviewPending), paymentToken, t.TransientTokenJWT)
 	case domain.CSStatusPendingAuth:
-		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollectionPending))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceCollectionPending), paymentToken, t.TransientTokenJWT)
 	default:
-		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceFailed))
+		_ = s.db.UpdateCollectionResult(req.ID, resp.ID, authID, domainResp.Status, string(domain.RemittanceFailed), paymentToken, t.TransientTokenJWT)
 	}
 
 	return domainResp, nil
@@ -285,11 +431,11 @@ func (s *collectionService) ReviewPayment(id string, approve bool) error {
 		if t != nil && t.CsTransactionID != "" {
 			_ = s.csRESTClient.ReverseAuthorization(t.CsTransactionID)
 		}
-		return s.db.UpdateCollectionResult(id, "", "", "REVIEW_REJECTED", string(domain.RemittanceFailed))
+		return s.db.UpdateCollectionResult(id, "", "", "REVIEW_REJECTED", string(domain.RemittanceFailed), "", "")
 	}
 
 	// Update to COLLECTED
-	err := s.db.UpdateCollectionResult(id, "", "", "REVIEW_APPROVED", string(domain.RemittanceCollected))
+	err := s.db.UpdateCollectionResult(id, "", "", "REVIEW_APPROVED", string(domain.RemittanceCollected), "", "")
 	if err != nil {
 		return err
 	}
@@ -308,8 +454,8 @@ func (s *collectionService) GetSenderCards(email string) ([]*domain.SenderCard, 
 	}
 	return s.db.GetCardsBySenderEmail(email)
 }
-func (s *collectionService) UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status string) error {
-	return s.db.UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status)
+func (s *collectionService) UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status, paymentTokenID, transientTokenJWT string) error {
+	return s.db.UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status, paymentTokenID, transientTokenJWT)
 }
 
 func (s *collectionService) UpdatePayoutResult(id, boaRef, payoutStatus, status string) error {
@@ -408,8 +554,7 @@ func (s *collectionService) validatedState(country, state string) string {
 }
 
 func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, actionList []string) *cybersource.PaymentRequest {
-	senderAlpha2, senderAlpha3 := domain.GetCountryCodes(req.Sender.Country)
-	_, recipientAlpha3 := domain.GetCountryCodes(req.Recipient.Country)
+	senderAlpha2, _ := domain.GetCountryCodes(req.Sender.Country)
 
 	// Only create a new token if we're using a new card (not a permanent token)
 	if req.PermanentTokenID == "" {
@@ -425,6 +570,12 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 			CommerceIndicator:     domain.CommerceIndicatorInternet,
 			ActionList:            s.enrichActionList(actionList, req),
 			BusinessApplicationId: domain.BusinessAppIDPersonToPerson,
+			ActionTokenTypes: func() []string {
+				if req.PermanentTokenID == "" {
+					return []string{"instrumentIdentifier", "paymentInstrument"}
+				}
+				return nil
+			}(),
 			AuthorizationOptions: &cybersource.AuthOptions{
 				AFTIndicator: "true",
 				FundingOptions: &cybersource.FundingOptions{
@@ -433,7 +584,7 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 			},
 		},
 		OrderInformation: cybersource.OrderInfo{
-			BillTo: cybersource.BillTo{
+			BillTo: &cybersource.BillTo{
 				FirstName:          strings.TrimSpace(req.Sender.FirstName),
 				LastName:           strings.TrimSpace(req.Sender.LastName),
 				Email:              strings.TrimSpace(req.Sender.Email),
@@ -450,7 +601,12 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 		},
 		DeviceInformation: &cybersource.DeviceInfo{
 			FingerprintSessionId: req.FingerprintID,
-			IPAddress:            req.IPAddress,
+			IPAddress: func() string {
+				if req.IPAddress == "::1" {
+					return "127.0.0.1"
+				}
+				return req.IPAddress
+			}(),
 		},
 		ConsumerAuthenticationInfo: &cybersource.ConsumerAuthInfo{
 			ReferenceId:                 req.PAReferenceId,
@@ -464,7 +620,7 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 			Address1:           strings.TrimSpace(req.Sender.Address),
 			Locality:           strings.TrimSpace(req.Sender.City),
 			AdministrativeArea: s.validatedState(senderAlpha2, req.Sender.AdministrativeArea),
-			CountryCode:        senderAlpha3,
+			CountryCode:        senderAlpha2,
 			PostalCode:         strings.TrimSpace(req.Sender.PostalCode),
 		},
 		RecipientInformation: &cybersource.RecipientInfo{
@@ -472,7 +628,10 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 			LastName:   strings.TrimSpace(req.Recipient.LastName),
 			Address1:   strings.TrimSpace(req.Recipient.Address),
 			Locality:   strings.TrimSpace(req.Recipient.City),
-			Country:    recipientAlpha3,
+			Country:    func() string {
+				alpha2, _ := domain.GetCountryCodes(req.Recipient.Country)
+				return alpha2
+			}(),
 			PostalCode: "1000", // Default for ETH if missing
 		},
 	}
@@ -480,7 +639,6 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 	// Token handling: saved card vs new card
 	if req.PermanentTokenID != "" {
 		// Use stored permanent token (Card-on-File)
-		// CyberSource requires expiration even with instrumentIdentifier
 		creq.PaymentInformation = &cybersource.PaymentInfo{
 			InstrumentIdentifier: &cybersource.TMSReference{ID: req.PermanentTokenID},
 			Card: &cybersource.CardInfo{
@@ -488,7 +646,7 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 				ExpirationYear:  req.ExpirationYear,
 			},
 		}
-		// Flag as stored credential for Card-on-File compliance
+		// Flag as stored credential for Card-on-File compliance - Line 584
 		creq.ProcessingInformation.AuthorizationOptions.Initiator = &cybersource.Initiator{
 			Type:                 "customer",
 			StoredCredentialUsed: "true",
@@ -580,24 +738,30 @@ func (s *collectionService) mapPaymentResponse(resp *cybersource.PaymentResponse
 	return domainResp, nil
 }
 
-// extractSuffixFromJWT parses the Flex Microform transient token to extract the last 4 digits (suffix)
-// since CyberSource responses occasionally omit the suffix on AFT approvals.
-func extractSuffixFromJWT(jwt string) string {
-	parts := strings.Split(jwt, ".")
+// extractCardDetailsFromJWT parses the Flex Microform transient token to extract card metadata
+func extractCardDetailsFromJWT(jwtToken string) (suffix, month, year string) {
+	parts := strings.Split(jwtToken, ".")
 	if len(parts) != 3 {
-		return ""
+		return "", "", ""
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return ""
+		return "", "", ""
 	}
 	var data struct {
 		Data struct {
-			Number string `json:"number"`
+			Number          string `json:"number"`
+			ExpirationMonth string `json:"expirationMonth"`
+			ExpirationYear  string `json:"expirationYear"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(payload, &data); err == nil && len(data.Data.Number) > 4 {
-		return data.Data.Number[len(data.Data.Number)-4:]
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return "", "", ""
 	}
-	return ""
+
+	suffix = data.Data.Number
+	if len(suffix) > 4 {
+		suffix = suffix[len(suffix)-4:]
+	}
+	return suffix, data.Data.ExpirationMonth, data.Data.ExpirationYear
 }

@@ -141,7 +141,10 @@ func main() {
 	api.POST("/collection/review", collectionHandler.ReviewPayment)
 	api.POST("/collection/webhook", collectionHandler.HandleWebhook)
 	api.GET("/collection/saved-cards", collectionHandler.GetSenderCards)
+
+	// 3DS Return (Moved to root to bypass group middleware issues)
 	api.POST("/collection/return", collectionHandler.Handle3DSReturn)
+	// e.Match([]string{http.MethodGet, http.MethodPost}, "/api/collection/return/", collectionHandler.Handle3DSReturn)
 
 	// === Payout (Bank of Abyssinia Outbound) ===
 	// POST /api/payout/validate      - Validate beneficiary account/wallet

@@ -54,7 +54,7 @@ type FundingInitiator struct {
 }
 
 type OrderInfo struct {
-	BillTo        BillTo        `json:"billTo"`
+	BillTo        *BillTo       `json:"billTo,omitempty"`
 	AmountDetails AmountDetails `json:"amountDetails"`
 }
 
