@@ -53,7 +53,7 @@ func (db *DB) InitializeSchema() error {
 		source_currency VARCHAR(20) NOT NULL,
 		collection_status VARCHAR(50),
 		payment_token_id VARCHAR(100),
-		
+		transient_token_jwt VARCHAR,
 		exchange_rate DECIMAL(18, 8) DEFAULT 0,
 		target_amount VARCHAR(50),
 		target_currency VARCHAR(20),
@@ -64,7 +64,7 @@ func (db *DB) InitializeSchema() error {
 		account_number VARCHAR(100),
 		bank_id VARCHAR(50),
 		boa_reference VARCHAR(100),
-		payout_status VARCHAR(50),
+		payout_status VARCHAR(50),	
 		
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -136,7 +136,7 @@ func (db *DB) UpdatePayoutResult(ID, boaRef, payoutStatus, status string) error 
 }
 
 func (db *DB) GetRemittanceByID(id string) (*domain.Remittance, error) {
-		row := db.Conn.QueryRow(`
+	row := db.Conn.QueryRow(`
 		SELECT 
 			id, COALESCE(cs_transaction_id, ''), COALESCE(cs_authentication_transaction_id, ''), status, 
 			sender_name, COALESCE(sender_first_name, ''), COALESCE(sender_last_name, ''), COALESCE(sender_email, ''),
