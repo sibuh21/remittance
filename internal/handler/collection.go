@@ -92,13 +92,13 @@ func (h *collectionHandler) AuthorizePayment(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (h *collectionHandler) ValidateAndAuthorize(c echo.Context) error {
+func (h *collectionHandler) CheckIfAuthorized(c echo.Context) error {
 	var req domain.ValidateRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{"message": "invalid request"})
 	}
 
-	resp, err := h.collectionSvc.ValidateAndAuthorize(&req)
+	resp, err := h.collectionSvc.CheckIfAuthorized(&req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{"message": err.Error()})
 	}
@@ -238,7 +238,7 @@ func (h *collectionHandler) Handle3DSReturn(c echo.Context) error {
 	}
 	fmt.Println("req:===>", req)
 
-	resp, err := h.collectionSvc.ValidateAndAuthorize(req)
+	resp, err := h.collectionSvc.CheckIfAuthorized(req)
 	if err != nil {
 		log.Printf("ERROR: 3DS validation failed for %s: %v", rem.ID, err)
 		return c.Redirect(http.StatusSeeOther, "/checkout/error?message="+err.Error())

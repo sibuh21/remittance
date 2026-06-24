@@ -514,19 +514,19 @@ type Remittance struct {
 	Status                        RemittanceStatus `json:"status"`
 
 	// Inbound (Card Collection)
-	SenderName       string `json:"sender_name"`
-	SenderFirstName  string `json:"sender_first_name"`
-	SenderLastName   string `json:"sender_last_name"`
-	SenderEmail      string `json:"sender_email"`
-	SenderAddress    string `json:"sender_address"`
-	SenderCity       string `json:"sender_city"`
-	SenderState      string `json:"sender_state"`
-	SenderPostalCode string `json:"sender_postal_code"`
-	SenderCountry    string `json:"sender_country"`
-	SourceAmount     string `json:"source_amount"`
-	SourceCurrency   string `json:"source_currency"`
-	CollectionStatus string `json:"collection_status,omitempty"`
-	PaymentTokenID   string `json:"payment_token_id,omitempty"`
+	SenderName        string `json:"sender_name"`
+	SenderFirstName   string `json:"sender_first_name"`
+	SenderLastName    string `json:"sender_last_name"`
+	SenderEmail       string `json:"sender_email"`
+	SenderAddress     string `json:"sender_address"`
+	SenderCity        string `json:"sender_city"`
+	SenderState       string `json:"sender_state"`
+	SenderPostalCode  string `json:"sender_postal_code"`
+	SenderCountry     string `json:"sender_country"`
+	SourceAmount      string `json:"source_amount"`
+	SourceCurrency    string `json:"source_currency"`
+	CollectionStatus  string `json:"collection_status,omitempty"`
+	PaymentTokenID    string `json:"payment_token_id,omitempty"`
 	TransientTokenJWT string `json:"transient_token_jwt,omitempty"`
 
 	// Conversion
@@ -557,7 +557,7 @@ type CollectionService interface {
 	CreateCaptureContext(origins []string) (string, error)
 	SetupPASetup(req *PASetupRequest) (*PASetupResponse, error)
 	AuthorizePayment(req *AuthorizeRequest) (*AuthorizeResponse, error)
-	ValidateAndAuthorize(req *ValidateRequest) (*AuthorizeResponse, error)
+	CheckIfAuthorized(req *ValidateRequest) (*AuthorizeResponse, error)
 	ReviewPayment(id string, approve bool) error
 	ProcessWebhook(notification *CyberSourceNotification) error
 	ProcessTSUWebhook(payload *TSUWebhookPayload) error
@@ -614,7 +614,7 @@ type CollectionHandler interface {
 	CreateCaptureContext(c echo.Context) error
 	SetupPayerAuth(c echo.Context) error
 	AuthorizePayment(c echo.Context) error
-	ValidateAndAuthorize(c echo.Context) error
+	CheckIfAuthorized(c echo.Context) error
 	ReviewPayment(c echo.Context) error
 	HandleWebhook(c echo.Context) error
 	GetSenderCards(c echo.Context) error

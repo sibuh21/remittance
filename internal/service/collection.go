@@ -135,7 +135,7 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 			}
 			req.Recipient = domain.RemittanceParty{
 				FirstName: t.ReceiverName,
-				Address:   t.SenderAddress, // Recipient info recovery if needed
+				Address:   t.SenderAddress,  // Recipient info recovery if needed
 				Country:   t.TargetCurrency, // Recipient info recovery if needed
 			}
 			req.Amount = t.SourceAmount
@@ -233,7 +233,7 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 	return domainResp, nil
 }
 
-func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*domain.AuthorizeResponse, error) {
+func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*domain.AuthorizeResponse, error) {
 	// 1. Fetch remittance first to get amount/currency needed for validation
 	t, err := s.db.GetRemittanceByID(req.ID)
 	if err != nil {
@@ -333,14 +333,14 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 		PostalCode:         t.SenderPostalCode,
 	}
 	paReq.RecipientInformation = &cybersource.RecipientInfo{
-		FirstName: t.ReceiverName,
-		Address1:  t.SenderAddress, // Recipient address recovery fallback
-		Country:   "ET",            // Alpha-2 for ETH
+		FirstName:  t.ReceiverName,
+		Address1:   t.SenderAddress, // Recipient address recovery fallback
+		Country:    "ET",            // Alpha-2 for ETH
 		PostalCode: "1000",
 	}
 
 	jsonData, _ := json.Marshal(paReq)
-	log.Printf("DEBUG: ValidateAndAuthorize - Request payload: %s", string(jsonData))
+	log.Printf("DEBUG: CheckIfAuthorized - Request payload: %s", string(jsonData))
 	resp, err := s.csRESTClient.AuthorizePayment(paReq)
 	if err != nil {
 		return nil, err
@@ -370,7 +370,7 @@ func (s *collectionService) ValidateAndAuthorize(req *domain.ValidateRequest) (*
 			SenderEmail: t.SenderEmail,
 			TokenID:     paymentToken,
 		}
-		
+
 		if resp.PaymentInformation != nil && resp.PaymentInformation.Card != nil {
 			cardInfo.CardBIN = resp.PaymentInformation.Card.Bin
 			cardInfo.CardSuffix = resp.PaymentInformation.Card.Suffix
@@ -624,11 +624,11 @@ func (s *collectionService) buildPaymentRequest(req *domain.AuthorizeRequest, ac
 			PostalCode:         strings.TrimSpace(req.Sender.PostalCode),
 		},
 		RecipientInformation: &cybersource.RecipientInfo{
-			FirstName:  strings.TrimSpace(req.Recipient.FirstName),
-			LastName:   strings.TrimSpace(req.Recipient.LastName),
-			Address1:   strings.TrimSpace(req.Recipient.Address),
-			Locality:   strings.TrimSpace(req.Recipient.City),
-			Country:    func() string {
+			FirstName: strings.TrimSpace(req.Recipient.FirstName),
+			LastName:  strings.TrimSpace(req.Recipient.LastName),
+			Address1:  strings.TrimSpace(req.Recipient.Address),
+			Locality:  strings.TrimSpace(req.Recipient.City),
+			Country: func() string {
 				alpha2, _ := domain.GetCountryCodes(req.Recipient.Country)
 				return alpha2
 			}(),
