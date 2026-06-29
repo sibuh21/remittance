@@ -47,10 +47,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentRemittance = null;
     let captureContext = null;
     let savedCards = [];
-    let selectedSavedCard = null; // stores { tokenId, expirationMonth, expirationYear }
+    let fingerprintID = null;
 
     // ─── Initial Load ────────────────────────────────────────────────────────
     fetchRate();
+    initProfiling();
 
     // ─── SDK Loading ─────────────────────────────────────────────────────────
     const FLEX_SDK_URL = 'https://flex.cybersource.com/cybersource/assets/microform/0.11/flex-microform.min.js';
@@ -126,6 +127,44 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         } catch (err) {
             console.error('Failed to load banks', err);
+        }
+    }
+
+    async function initProfiling() {
+        try {
+            const resp = await fetch('/api/collection/config');
+            const cfg = await resp.json();
+            const merchantID = cfg.merchant_id;
+            
+            // Generate a unique session ID
+            const sessionID = merchantID + Date.now() + Math.random().toString(36).substring(2, 9);
+            fingerprintID = sessionID;
+
+            console.log("INFO: Initiating CyberSource Device Profiling. Session ID:", sessionID);
+            console.log("DFP===>", sessionID);
+
+            const orgID = "1s4h7ay3"; // Sandbox Org ID
+            
+            // Inject profiling scripts/tags
+            // Source: https://developer.cybersource.com/library/documentation/dev_guides/Decision_Manager_Using_REST_API/html/topics/device_fingerprinting.htm
+            const pDiv = document.createElement('div');
+            pDiv.style.background = `url(https://tmtest.cybersource.com/fp/clear.png?org_id=${orgID}&session_id=${sessionID}&m=1)`;
+            pDiv.style.width = "1px";
+            pDiv.style.height = "1px";
+            
+            const img = document.createElement('img');
+            img.src = `https://tmtest.cybersource.com/fp/clear.png?org_id=${orgID}&session_id=${sessionID}&m=2`;
+            img.alt = "";
+            pDiv.appendChild(img);
+
+            const script = document.createElement('script');
+            script.src = `https://tmtest.cybersource.com/fp/check.js?org_id=${orgID}&session_id=${sessionID}`;
+            pDiv.appendChild(script);
+
+            document.body.appendChild(pDiv);
+            
+        } catch (err) {
+            console.error("ERROR: Failed to initiate profiling:", err);
         }
     }
 
@@ -363,6 +402,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 // DDC
                 await performDDC(paData.device_data_collection_url, paData.access_token);
 
+                // Browser info for 3DS 2.x
+                const browserInfo = {
+                    user_agent: navigator.userAgent,
+                    color_depth: String(screen.colorDepth),
+                    screen_width: String(screen.width),
+                    screen_height: String(screen.height),
+                    language: navigator.language || navigator.userLanguage,
+                    time_difference: String(new Date().getTimezoneOffset()),
+                    java_enabled: navigator.javaEnabled(),
+                    javascript_enabled: true,
+                    accept_header: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                };
+
                 // Authorization with permanent token
                 await processAuthorization({
                     id: id,
@@ -373,7 +425,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     amount: parseFloat(document.getElementById('send_amount').value).toFixed(2),
                     currency: currentRemittance.send_currency,
                     sender: senderData,
-                    recipient: recipientData
+                    recipient: recipientData,
+                    browser_info: browserInfo,
+                    fingerprint_id: fingerprintID
                 });
 
             } catch (err) {
@@ -445,6 +499,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Step 5: Device Data Collection (DDC)
                 await performDDC(paData.device_data_collection_url, paData.access_token);
 
+                // Collect browser information for 3DS 2.x Browser Flow
+                const browserInfo = {
+                    user_agent: navigator.userAgent,
+                    color_depth: String(screen.colorDepth),
+                    screen_width: String(screen.width),
+                    screen_height: String(screen.height),
+                    language: navigator.language || navigator.userLanguage,
+                    time_difference: String(new Date().getTimezoneOffset()),
+                    java_enabled: navigator.javaEnabled(),
+                    javascript_enabled: true,
+                    accept_header: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                };
+
                 // Step 6: Authorization Request
                 await processAuthorization({
                     id: id,
@@ -456,7 +523,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     amount: parseFloat(document.getElementById('send_amount').value).toFixed(2),
                     currency: currentRemittance.send_currency,
                     sender: senderData,
-                    recipient: recipientData
+                    recipient: recipientData,
+                    browser_info: browserInfo,
+                    fingerprint_id: fingerprintID
                 });
 
             } catch (err) {
@@ -505,6 +574,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ─── Step 6 & 7: Authorization & Challenge ──────────────────────────────
     async function processAuthorization(authReq) {
+        console.log("AUTH_REQUEST_SENT===>", authReq);
+        if (authReq.fingerprint_id) {
+            console.log("DFP===>", authReq.fingerprint_id);
+        }
         const response = await fetch('/api/collection/authorize', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

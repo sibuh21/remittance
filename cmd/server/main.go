@@ -91,7 +91,7 @@ func main() {
 		}()
 	}
 
-	collectionSvc := service.NewCollectionService(csRESTClient, db, cfg.CyberSource.ReturnURL, onCollected)
+	collectionSvc := service.NewCollectionService(csRESTClient, db, cfg.CyberSource.ReturnURL, cfg.CyberSource.MerchantID, onCollected)
 	remittanceSvc = service.NewRemittanceService(collectionSvc, payoutSvc, db, cfg.CyberSource.TargetOrigins)
 
 	// ─── Initialize Handlers ────────────────────────────────────────────────
@@ -102,6 +102,22 @@ func main() {
 	// ─── Setup Echo Server ──────────────────────────────────────────────────
 	e := echo.New()
 	e.HideBanner = true
+
+	// === CSP Middleware (MUST BE FIRST) ===
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Set the CSP header
+			val := "default-src 'self' https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
+				"script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://flex.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
+				"connect-src 'self' https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
+				"frame-src 'self' https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
+				"img-src 'self' data: https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com https://img.icons8.com; " +
+				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+				"font-src 'self' https://fonts.gstatic.com;"
+			c.Response().Header().Set("Content-Security-Policy", val)
+			return next(c)
+		}
+	})
 
 	// Middleware
 	e.Use(middleware.Logger())
@@ -141,6 +157,7 @@ func main() {
 	api.POST("/collection/review", collectionHandler.ReviewPayment)
 	api.POST("/collection/webhook", collectionHandler.HandleWebhook)
 	api.GET("/collection/saved-cards", collectionHandler.GetSenderCards)
+	api.GET("/collection/config", collectionHandler.GetConfig)
 
 	// 3DS Return (Moved to root to bypass group middleware issues)
 	api.POST("/collection/return", collectionHandler.Handle3DSReturn)

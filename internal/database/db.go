@@ -60,6 +60,9 @@ func (db *DB) InitializeSchema() error {
 		
 		receiver_name VARCHAR(255) NOT NULL,
 		receiver_phone VARCHAR(50),
+		receiver_address VARCHAR(255),
+		receiver_city VARCHAR(100),
+		receiver_country VARCHAR(100),
 		payout_type VARCHAR(50) NOT NULL,
 		account_number VARCHAR(100),
 		bank_id VARCHAR(50),
@@ -96,14 +99,16 @@ func (db *DB) CreateRemittance(t *domain.Remittance) error {
 		id, status, sender_name, sender_first_name, sender_last_name, sender_email, 
 		sender_address, sender_city, sender_state, sender_postal_code, sender_country,
 		source_amount, source_currency, exchange_rate, target_amount, target_currency, 
-		receiver_name, receiver_phone, payout_type, account_number, bank_id, payment_token_id, transient_token_jwt
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+		receiver_name, receiver_phone, receiver_address, receiver_city, receiver_country,
+		payout_type, account_number, bank_id, payment_token_id, transient_token_jwt
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
 	`
 	_, err := db.Conn.Exec(query,
 		t.ID, t.Status, t.SenderName, t.SenderFirstName, t.SenderLastName, t.SenderEmail,
 		t.SenderAddress, t.SenderCity, t.SenderState, t.SenderPostalCode, t.SenderCountry,
 		t.SourceAmount, t.SourceCurrency, t.ExchangeRate, t.TargetAmount, t.TargetCurrency,
-		t.ReceiverName, t.ReceiverPhone, t.PayoutType, t.AccountNumber, t.BankID, t.PaymentTokenID, t.TransientTokenJWT)
+		t.ReceiverName, t.ReceiverPhone, t.ReceiverAddress, t.ReceiverCity, t.ReceiverCountry,
+		t.PayoutType, t.AccountNumber, t.BankID, t.PaymentTokenID, t.TransientTokenJWT)
 	if err != nil {
 		log.Printf("ERROR: Failed to create remittance in DB: %v", err)
 	}
@@ -145,7 +150,9 @@ func (db *DB) GetRemittanceByID(id string) (*domain.Remittance, error) {
 			source_amount, source_currency, COALESCE(collection_status, ''), COALESCE(payment_token_id, ''),
 			COALESCE(transient_token_jwt, ''),
 			exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
-			receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
+			receiver_name, COALESCE(receiver_phone, ''), COALESCE(receiver_address, ''), 
+			COALESCE(receiver_city, ''), COALESCE(receiver_country, ''),
+			payout_type, COALESCE(account_number, ''),
 			COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
 			created_at, updated_at 
 		FROM remittances 
@@ -159,7 +166,8 @@ func (db *DB) GetRemittanceByID(id string) (*domain.Remittance, error) {
 		&t.SenderPostalCode, &t.SenderCountry,
 		&t.SourceAmount, &t.SourceCurrency, &t.CollectionStatus, &t.PaymentTokenID, &t.TransientTokenJWT,
 		&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency,
-		&t.ReceiverName, &t.ReceiverPhone, &t.PayoutType, &t.AccountNumber,
+		&t.ReceiverName, &t.ReceiverPhone, &t.ReceiverAddress, &t.ReceiverCity, &t.ReceiverCountry,
+		&t.PayoutType, &t.AccountNumber,
 		&t.BankID, &t.BoAReference, &t.PayoutStatus,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
@@ -175,7 +183,9 @@ func (db *DB) GetRemittanceByCSAuthenticationID(authID string) (*domain.Remittan
 		id, COALESCE(cs_transaction_id, ''), COALESCE(cs_authentication_transaction_id, ''), status, sender_name, COALESCE(sender_email, ''),
 		source_amount, source_currency, COALESCE(collection_status, ''),
 		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
-		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
+		receiver_name, COALESCE(receiver_phone, ''), COALESCE(receiver_address, ''), 
+		COALESCE(receiver_city, ''), COALESCE(receiver_country, ''),
+		payout_type, COALESCE(account_number, ''),
 		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
 		created_at, updated_at 
 	FROM remittances 
@@ -188,7 +198,8 @@ func (db *DB) GetRemittanceByCSAuthenticationID(authID string) (*domain.Remittan
 		&t.ID, &t.CsTransactionID, &t.CsAuthenticationTransactionID, &t.Status, &t.SenderName, &t.SenderEmail,
 		&t.SourceAmount, &t.SourceCurrency, &t.CollectionStatus,
 		&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName,
-		&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID,
+		&t.ReceiverPhone, &t.ReceiverAddress, &t.ReceiverCity, &t.ReceiverCountry,
+		&t.PayoutType, &t.AccountNumber, &t.BankID,
 		&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -203,7 +214,9 @@ func (db *DB) GetRemittancesBySender(email string, status string) ([]*domain.Rem
 		id, COALESCE(cs_transaction_id, ''), COALESCE(cs_authentication_transaction_id, ''), status, sender_name, COALESCE(sender_email, ''),
 		source_amount, source_currency, COALESCE(collection_status, ''),
 		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
-		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
+		receiver_name, COALESCE(receiver_phone, ''), COALESCE(receiver_address, ''), 
+		COALESCE(receiver_city, ''), COALESCE(receiver_country, ''),
+		payout_type, COALESCE(account_number, ''),
 		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
 		created_at, updated_at 
 	FROM remittances 
@@ -229,7 +242,8 @@ func (db *DB) GetRemittancesBySender(email string, status string) ([]*domain.Rem
 			&t.ID, &t.CsTransactionID, &t.CsAuthenticationTransactionID, &t.Status, &t.SenderName, &t.SenderEmail,
 			&t.SourceAmount, &t.SourceCurrency, &t.CollectionStatus,
 			&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName,
-			&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID,
+			&t.ReceiverPhone, &t.ReceiverAddress, &t.ReceiverCity, &t.ReceiverCountry,
+			&t.PayoutType, &t.AccountNumber, &t.BankID,
 			&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
 		)
 		if err != nil {
@@ -246,7 +260,9 @@ func (db *DB) GetRemittancesByReceiver(phone string, status string) ([]*domain.R
 		id, COALESCE(cs_transaction_id, ''), COALESCE(cs_authentication_transaction_id, ''), status, sender_name, COALESCE(sender_email, ''),
 		source_amount, source_currency, COALESCE(collection_status, ''),
 		exchange_rate, COALESCE(target_amount, ''), COALESCE(target_currency, ''),
-		receiver_name, COALESCE(receiver_phone, ''), payout_type, COALESCE(account_number, ''),
+		receiver_name, COALESCE(receiver_phone, ''), COALESCE(receiver_address, ''), 
+		COALESCE(receiver_city, ''), COALESCE(receiver_country, ''),
+		payout_type, COALESCE(account_number, ''),
 		COALESCE(bank_id, ''), COALESCE(boa_reference, ''), COALESCE(payout_status, ''),
 		created_at, updated_at 
 	FROM remittances 
@@ -272,7 +288,8 @@ func (db *DB) GetRemittancesByReceiver(phone string, status string) ([]*domain.R
 			&t.ID, &t.CsTransactionID, &t.CsAuthenticationTransactionID, &t.Status, &t.SenderName, &t.SenderEmail,
 			&t.SourceAmount, &t.SourceCurrency, &t.CollectionStatus,
 			&t.ExchangeRate, &t.TargetAmount, &t.TargetCurrency, &t.ReceiverName,
-			&t.ReceiverPhone, &t.PayoutType, &t.AccountNumber, &t.BankID,
+			&t.ReceiverPhone, &t.ReceiverAddress, &t.ReceiverCity, &t.ReceiverCountry,
+			&t.PayoutType, &t.AccountNumber, &t.BankID,
 			&t.BoAReference, &t.PayoutStatus, &t.CreatedAt, &t.UpdatedAt,
 		)
 		if err != nil {

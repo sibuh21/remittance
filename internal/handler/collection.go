@@ -256,3 +256,11 @@ func (h *collectionHandler) Handle3DSReturn(c echo.Context) error {
 		return c.Redirect(http.StatusSeeOther, "/checkout/error?message=payment_failed")
 	}
 }
+
+func (h *collectionHandler) GetConfig(c echo.Context) error {
+	cfg, err := h.collectionSvc.GetConfig()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"message": err.Error()})
+	}
+	return c.JSON(http.StatusOK, cfg)
+}

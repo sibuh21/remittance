@@ -223,6 +223,19 @@ type PASetupResponse struct {
 	ReferenceId             string `json:"reference_id"`
 }
 
+// BrowserInfo contains mandatory fields for 3DS 2.x Browser-mode authentication.
+type BrowserInfo struct {
+	UserAgent         string `json:"user_agent"`
+	ColorDepth        string `json:"color_depth"`
+	ScreenWidth       string `json:"screen_width"`
+	ScreenHeight      string `json:"screen_height"`
+	Language          string `json:"language"`
+	TimeDifference    string `json:"time_difference"`
+	AcceptHeader      string `json:"accept_header"`
+	JavaEnabled       bool   `json:"java_enabled"`
+	JavaScriptEnabled bool   `json:"javascript_enabled"`
+}
+
 // AuthorizeRequest (Step 5)
 type AuthorizeRequest struct {
 	ID                          string          `json:"id"`
@@ -240,6 +253,7 @@ type AuthorizeRequest struct {
 	Amount                      string          `json:"amount"`
 	Currency                    string          `json:"currency"`
 	AuthenticationTransactionId string          `json:"authentication_transaction_id,omitempty"`
+	BrowserInfo                 BrowserInfo     `json:"browser_info"`
 }
 
 // ValidateRequest (Step 7)
@@ -535,13 +549,16 @@ type Remittance struct {
 	TargetCurrency string  `json:"target_currency"`
 
 	// Outbound (Bank Payout)
-	ReceiverName  string     `json:"receiver_name"`
-	ReceiverPhone string     `json:"receiver_phone,omitempty"`
-	PayoutType    PayoutType `json:"payout_type"`
-	AccountNumber string     `json:"account_number,omitempty"`
-	BankID        string     `json:"bank_id,omitempty"`
-	BoAReference  string     `json:"boa_reference,omitempty"`
-	PayoutStatus  string     `json:"payout_status,omitempty"`
+	ReceiverName     string     `json:"receiver_name"`
+	ReceiverPhone    string     `json:"receiver_phone,omitempty"`
+	ReceiverAddress  string     `json:"receiver_address,omitempty"`
+	ReceiverCity     string     `json:"receiver_city,omitempty"`
+	ReceiverCountry  string     `json:"receiver_country,omitempty"`
+	PayoutType       PayoutType `json:"payout_type"`
+	AccountNumber    string     `json:"account_number,omitempty"`
+	BankID           string     `json:"bank_id,omitempty"`
+	BoAReference     string     `json:"boa_reference,omitempty"`
+	PayoutStatus     string     `json:"payout_status,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -563,6 +580,7 @@ type CollectionService interface {
 	ProcessTSUWebhook(payload *TSUWebhookPayload) error
 	ProcessCaseManagementWebhook(payload *CaseManagementWebhookPayload) error
 	GetSenderCards(email string) ([]*SenderCard, error)
+	GetConfig() (map[string]string, error)
 	UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status, paymentTokenID, transientTokenJWT string) error
 	UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
 	GetRemittanceByID(id string) (*Remittance, error)
@@ -619,6 +637,7 @@ type CollectionHandler interface {
 	HandleWebhook(c echo.Context) error
 	GetSenderCards(c echo.Context) error
 	Handle3DSReturn(c echo.Context) error
+	GetConfig(c echo.Context) error
 }
 
 // PayoutHandler handles Bank of Abyssinia payout HTTP endpoints.
