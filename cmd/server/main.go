@@ -115,9 +115,10 @@ func main() {
 		return func(c echo.Context) error {
 			// Set the CSP header
 			val := "default-src 'self' https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
-				"script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://flex.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
+				"script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
 				"connect-src 'self' https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
 				"frame-src 'self' https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
+				"frame-ancestors 'self' https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com; " +
 				"img-src 'self' data: https://*.cybersource.com https://*.cardinalcommerce.com https://*.cardinaltrusted.com https://img.icons8.com; " +
 				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 				"font-src 'self' https://fonts.gstatic.com;"

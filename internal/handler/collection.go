@@ -219,14 +219,14 @@ func (h *collectionHandler) Handle3DSReturn(c echo.Context) error {
 
 	if transactionID == "" {
 		log.Printf("ERROR: 3DS return missing transactionId")
-		return c.Redirect(http.StatusSeeOther, "/checkout/error?message=missing_transaction_id")
+		return topRedirect(c, "/checkout/error?message=missing_transaction_id")
 	}
 
 	// 1. Fetch remittance from DB to get the original Remittance ID
 	rem, err := h.collectionSvc.GetRemittanceByCSAuthenticationID(transactionID)
 	if err != nil {
 		log.Printf("ERROR: Failed to find remittance %s on 3DS return: %v", transactionID, err)
-		return c.Redirect(http.StatusSeeOther, "/checkout/error?message=remittance_not_found")
+		return topRedirect(c, "/checkout/error?message=remittance_not_found")
 	}
 
 	// 2. Send validation request to CyberSource
@@ -234,25 +234,39 @@ func (h *collectionHandler) Handle3DSReturn(c echo.Context) error {
 		ID:                          rem.ID,
 		AuthenticationTransactionId: transactionID,
 	}
-	fmt.Println("req:===>", req)
 
 	resp, err := h.collectionSvc.CheckIfAuthorized(req)
 	if err != nil {
 		log.Printf("ERROR: 3DS validation failed for %s: %v", rem.ID, err)
-		return c.Redirect(http.StatusSeeOther, "/checkout/error?message="+err.Error())
+		return topRedirect(c, "/checkout/error?message="+err.Error())
 	}
 
-	// 3. Redirect based on response status
+	// 3. Redirect the TOP-LEVEL window based on response status.
+	// This handler runs inside Cardinal's challenge iframe, so we must use
+	// window.top.location.href to break out of it.
 	switch resp.Status {
 	case domain.CSStatusAuthorized:
-		return c.Redirect(http.StatusSeeOther, "/checkout/success?ref="+rem.ID)
+		return topRedirect(c, "/checkout/success?ref="+rem.ID)
 	case domain.CSStatusAuthorizedPendingReview:
-		return c.Redirect(http.StatusSeeOther, "/checkout/review?ref="+rem.ID)
+		return topRedirect(c, "/checkout/review?ref="+rem.ID)
 	case domain.CSStatusDeclined, domain.CSStatusRejected:
-		return c.Redirect(http.StatusSeeOther, "/checkout/declined?message="+resp.Message)
+		return topRedirect(c, "/checkout/declined?message="+resp.Message)
 	default:
-		return c.Redirect(http.StatusSeeOther, "/checkout/error?message=payment_failed")
+		return topRedirect(c, "/checkout/error?message=payment_failed")
 	}
+}
+
+// topRedirect returns a small HTML page that redirects the top-level window.
+// This is required because the 3DS return URL is loaded inside Cardinal's
+// challenge iframe; a normal HTTP 302 redirect would stay trapped in the iframe.
+func topRedirect(c echo.Context, url string) error {
+	html := fmt.Sprintf(`<!DOCTYPE html>
+<html><head><title>Redirecting...</title></head>
+<body>
+<p>Processing payment, please wait...</p>
+<script>window.top.location.href = %q;</script>
+</body></html>`, url)
+	return c.HTML(http.StatusOK, html)
 }
 
 func (h *collectionHandler) GetConfig(c echo.Context) error {
