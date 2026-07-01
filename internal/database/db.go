@@ -484,97 +484,62 @@ func (q *Queries) GetCardsByUserID(ctx context.Context, userID string) ([]GetCar
 }
 
 const getRemittanceByCSAuthenticationID = `-- name: GetRemittanceByCSAuthenticationID :one
-SELECT 
-	id, 
-	cs_transaction_id, 
-	cs_authentication_transaction_id, 
-	status, 
-    sender_user_id, 
-    sender_address, 
-    sender_city, 
-    sender_state, 
-    sender_postal_code, 
-    sender_country,
-	source_amount, 
-	source_currency, 
-	cs_transaction_id, 
-	cs_authentication_transaction_id, 
-	COALESCE(collection_status, '') as collection_status,
-	exchange_rate, COALESCE(target_amount, '') as target_amount, 
-	COALESCE(target_currency, '') as target_currency,
-	COALESCE(receiver_first_name, '') as receiver_first_name, 
-	COALESCE(receiver_last_name, '') as receiver_last_name, 
-	COALESCE(receiver_phone, '') as receiver_phone, 
-	COALESCE(receiver_email, '') as receiver_email,
-	COALESCE(receiver_address, '') as receiver_address, 
-	COALESCE(receiver_city, '') as receiver_city, 
-	COALESCE(receiver_state, '') as receiver_state, 
-	COALESCE(receiver_postal_code, '') as receiver_postal_code, 
-	COALESCE(receiver_country, '') as receiver_country, 
-	payout_type, COALESCE(account_number, '') as account_number,
-	COALESCE(bank_id, '') as bank_id, COALESCE(boa_reference, '') as boa_reference, 
-	COALESCE(payout_status, '') as payout_status,
-	created_at, updated_at 
+SELECT id,
+ cs_transaction_id, 
+ cs_authentication_transaction_id, 
+ status,
+ sender_card_id, 
+ sender_user_id,
+  sender_country, 
+  sender_state, 
+  sender_city, 
+  sender_address, 
+  sender_postal_code, 
+  source_amount, 
+  source_currency,
+   collection_status,
+    exchange_rate, 
+	target_amount, 
+	target_currency, 
+	receiver_first_name, 
+	receiver_last_name, 
+	receiver_phone, 
+	receiver_email,
+	 receiver_country, 
+	 receiver_state, 
+	 receiver_city, 
+	 receiver_address, 
+	 receiver_postal_code,
+	  payout_type, 
+	  account_number, 
+	  bank_id,
+	   boa_reference,
+	    payout_status, 
+		created_at,
+		 updated_at, 
+		 deleted_at
 FROM remittances 
 WHERE cs_authentication_transaction_id = $1
 	AND deleted_at IS NULL
 `
 
-type GetRemittanceByCSAuthenticationIDRow struct {
-	ID                              uuid.UUID
-	CsTransactionID                 sql.NullString
-	CsAuthenticationTransactionID   sql.NullString
-	Status                          string
-	SenderUserID                    string
-	SenderAddress                   string
-	SenderCity                      string
-	SenderState                     string
-	SenderPostalCode                string
-	SenderCountry                   string
-	SourceAmount                    decimal.Decimal
-	SourceCurrency                  string
-	CsTransactionID_2               sql.NullString
-	CsAuthenticationTransactionID_2 sql.NullString
-	CollectionStatus                string
-	ExchangeRate                    decimal.NullDecimal
-	TargetAmount                    decimal.Decimal
-	TargetCurrency                  string
-	ReceiverFirstName               string
-	ReceiverLastName                string
-	ReceiverPhone                   string
-	ReceiverEmail                   string
-	ReceiverAddress                 string
-	ReceiverCity                    string
-	ReceiverState                   string
-	ReceiverPostalCode              string
-	ReceiverCountry                 string
-	PayoutType                      string
-	AccountNumber                   string
-	BankID                          string
-	BoaReference                    string
-	PayoutStatus                    string
-	CreatedAt                       sql.NullTime
-	UpdatedAt                       sql.NullTime
-}
-
-func (q *Queries) GetRemittanceByCSAuthenticationID(ctx context.Context, csAuthenticationTransactionID sql.NullString) (GetRemittanceByCSAuthenticationIDRow, error) {
+func (q *Queries) GetRemittanceByCSAuthenticationID(ctx context.Context, csAuthenticationTransactionID sql.NullString) (Remittance, error) {
 	row := q.db.QueryRow(getRemittanceByCSAuthenticationID, csAuthenticationTransactionID)
-	var i GetRemittanceByCSAuthenticationIDRow
+	var i Remittance
 	err := row.Scan(
 		&i.ID,
 		&i.CsTransactionID,
 		&i.CsAuthenticationTransactionID,
 		&i.Status,
+		&i.SenderCardID,
 		&i.SenderUserID,
-		&i.SenderAddress,
-		&i.SenderCity,
-		&i.SenderState,
-		&i.SenderPostalCode,
 		&i.SenderCountry,
+		&i.SenderState,
+		&i.SenderCity,
+		&i.SenderAddress,
+		&i.SenderPostalCode,
 		&i.SourceAmount,
 		&i.SourceCurrency,
-		&i.CsTransactionID_2,
-		&i.CsAuthenticationTransactionID_2,
 		&i.CollectionStatus,
 		&i.ExchangeRate,
 		&i.TargetAmount,
@@ -583,11 +548,11 @@ func (q *Queries) GetRemittanceByCSAuthenticationID(ctx context.Context, csAuthe
 		&i.ReceiverLastName,
 		&i.ReceiverPhone,
 		&i.ReceiverEmail,
-		&i.ReceiverAddress,
-		&i.ReceiverCity,
-		&i.ReceiverState,
-		&i.ReceiverPostalCode,
 		&i.ReceiverCountry,
+		&i.ReceiverState,
+		&i.ReceiverCity,
+		&i.ReceiverAddress,
+		&i.ReceiverPostalCode,
 		&i.PayoutType,
 		&i.AccountNumber,
 		&i.BankID,
@@ -595,6 +560,7 @@ func (q *Queries) GetRemittanceByCSAuthenticationID(ctx context.Context, csAuthe
 		&i.PayoutStatus,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

@@ -50,7 +50,6 @@ func DecodeTransientToken(tokenStr string) (*CardInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed base64 token payload decode: %w", err)
 	}
-	fmt.Println("card payload:===>", string(decodedBytes))
 	var payload CardInfo
 	if err := json.Unmarshal(decodedBytes, &payload); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal payload JSON: %w", err)

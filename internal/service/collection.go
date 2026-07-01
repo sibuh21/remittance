@@ -301,9 +301,14 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 		}
 		domainResp.PaymentTokenID = paymentToken
 	}
-	savedCard := database.SenderCard{}
-	if domainResp.Status == domain.CSStatusAuthorized && req.TransientTokenJWT != "" {
-		savedCard, err = s.db.SaveSenderCard(context.Background(), database.SaveSenderCardParams{
+	var senderCardRef *uuid.UUID
+	if req.PermanentTokenID != "" {
+		card, err := s.db.GetCardByToken(context.Background(), sql.NullString{String: req.PermanentTokenID, Valid: true})
+		if err == nil {
+			senderCardRef = &card.ID
+		}
+	} else if domainResp.Status == domain.CSStatusAuthorized && req.TransientTokenJWT != "" {
+		savedCard, err := s.db.SaveSenderCard(context.Background(), database.SaveSenderCardParams{
 			ID:              uuid.New(),
 			UserID:          user.ID.String(),
 			TokenID:         sql.NullString{String: paymentToken, Valid: true},
@@ -317,17 +322,19 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 			log.Printf("failed to save sender card: %v", err)
 			return nil, fmt.Errorf("failed to save sender card: %v", err)
 		}
+		senderCardRef = &savedCard.ID
 	}
 
 	authID := ""
-	transactionID := ""
+	if resp.ConsumerAuthenticationInfo != nil {
+		authID = resp.ConsumerAuthenticationInfo.AuthenticationTransactionId
+	}
+	transactionID := resp.ID
 
 	newStatus := string(domain.RemittanceFailed)
 	switch domainResp.Status {
 	case domain.CSStatusAuthorized:
 		newStatus = string(domain.RemittanceCollected)
-		authID = resp.ConsumerAuthenticationInfo.AuthenticationTransactionId
-		transactionID = resp.ID
 	case domain.CSStatusAuthorizedPendingReview:
 		newStatus = string(domain.RemittanceReviewPending)
 	case domain.CSStatusPendingAuth:
@@ -339,9 +346,18 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 		CsAuthenticationTransactionID: sql.NullString{String: authID, Valid: authID != ""},
 		CollectionStatus:              sql.NullString{String: newStatus, Valid: true},
 		Status:                        newStatus,
-		SenderCardID:                  sql.NullString{String: savedCard.ID.String(), Valid: savedCard.ID.String() != ""},
-		ID:                            remID,
+		SenderCardID: func() sql.NullString {
+			if senderCardRef != nil {
+				return sql.NullString{String: senderCardRef.String(), Valid: true}
+			}
+			return sql.NullString{Valid: false}
+		}(),
+		ID: remID,
 	})
+	if err != nil {
+		log.Printf("ERROR: failed to update remittance database state: %v", err)
+		return nil, fmt.Errorf("failed to update remittance: %w", err)
+	}
 
 	if domainResp.Status == domain.CSStatusAuthorized && s.onCollected != nil {
 		s.onCollected(remID)
@@ -470,7 +486,7 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 		LastName:           user.LastName,
 		Address1:           t.SenderAddress,
 		Locality:           t.SenderCity,
-		AdministrativeArea: t.SenderState,
+		AdministrativeArea: s.validatedState(t.SenderCountry, t.SenderState),
 		CountryCode:        senderAlpha2,
 		PostalCode:         t.SenderPostalCode,
 	}
@@ -506,7 +522,7 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 		domainResp.PaymentTokenID = paymentToken
 	}
 
-	// AUTO-SAVE CARD (Post-3DS): Update the card record if we found a permanent token.
+	var savedCardID *uuid.UUID
 	if user.Email != "" && paymentToken != "" && cardInfo == nil {
 		transientTokenJWT, err := s.redisClient.Get("transient_token_" + req.ID).Result()
 		var bin, suffix, expM, expY, brand sql.NullString
@@ -520,7 +536,7 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 			}
 		}
 
-		_, _ = s.db.SaveSenderCard(context.Background(), database.SaveSenderCardParams{
+		sc, err := s.db.SaveSenderCard(context.Background(), database.SaveSenderCardParams{
 			ID:              uuid.New(),
 			UserID:          user.ID.String(),
 			TokenID:         sql.NullString{String: paymentToken, Valid: true},
@@ -530,6 +546,11 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 			ExpirationMonth: expM,
 			ExpirationYear:  expY,
 		})
+		if err == nil {
+			savedCardID = &sc.ID
+		}
+	} else if cardInfo != nil {
+		savedCardID = &cardInfo.ID
 	}
 
 	authID := req.AuthenticationTransactionId
@@ -547,13 +568,23 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 		newStatus = string(domain.RemittanceCollectionPending)
 	}
 
-	_, _ = s.db.UpdateRemittance(context.Background(), database.UpdateRemittanceParams{
+	_, err = s.db.UpdateRemittance(context.Background(), database.UpdateRemittanceParams{
 		CsTransactionID:               sql.NullString{String: resp.ID, Valid: resp.ID != ""},
 		CsAuthenticationTransactionID: sql.NullString{String: authID, Valid: authID != ""},
 		CollectionStatus:              sql.NullString{String: newStatus, Valid: true},
 		Status:                        newStatus,
-		ID:                            remID,
+		SenderCardID: func() sql.NullString {
+			if savedCardID != nil {
+				return sql.NullString{String: savedCardID.String(), Valid: true}
+			}
+			return sql.NullString{Valid: false}
+		}(),
+		ID: remID,
 	})
+	if err != nil {
+		log.Printf("ERROR: Database update failed for CheckIfAuthorized: %v", err)
+		return nil, fmt.Errorf("failed to update validated remittance: %v", err)
+	}
 
 	if domainResp.Status == domain.CSStatusAuthorized && s.onCollected != nil {
 		s.onCollected(remID)

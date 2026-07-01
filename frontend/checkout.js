@@ -589,8 +589,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.getElementById('challenge-form').submit();
 
-        // Note: No further logic needed here as the /collection/return handler 
-        // will handle the post-3DS redirect to success/error pages.
+        // Listen for the postMessage from the 3DS return handler
+        const handleReturnMessage = (event) => {
+            try {
+                const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                if (!data || data.event !== '3ds_result') return;
+
+                // Clean up listener
+                window.removeEventListener('message', handleReturnMessage);
+
+                // Close challenge modal
+                challengeModal.classList.add('hidden');
+
+                console.log("3DS_RESULT===>", data);
+
+                // Redirect based on authorization status
+                switch (data.status) {
+                    case 'AUTHORIZED':
+                        window.location.href = `/checkout/success?ref=${data.ref}`;
+                        break;
+                    case 'AUTHORIZED_PENDING_REVIEW':
+                        window.location.href = `/checkout/review?ref=${data.ref}`;
+                        break;
+                    case 'DECLINED':
+                    case 'REJECTED':
+                        window.location.href = `/checkout/declined?message=${encodeURIComponent(data.message || 'Payment declined')}`;
+                        break;
+                    default:
+                        window.location.href = `/checkout/error?message=${encodeURIComponent(data.message || 'Payment failed')}`;
+                        break;
+                }
+            } catch (e) {
+                // Ignore non-JSON or unrelated messages
+            }
+        };
+
+        window.addEventListener('message', handleReturnMessage);
     }
 
     // ─── UI Helpers ────────────────────────────────────────────────────────

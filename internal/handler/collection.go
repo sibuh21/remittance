@@ -219,14 +219,22 @@ func (h *collectionHandler) Handle3DSReturn(c echo.Context) error {
 
 	if transactionID == "" {
 		log.Printf("ERROR: 3DS return missing transactionId")
-		return topRedirect(c, "/checkout/error?message=missing_transaction_id")
+		return postMessageResult(c, map[string]string{
+			"event":   "3ds_result",
+			"status":  "ERROR",
+			"message": "missing_transaction_id",
+		})
 	}
 
 	// 1. Fetch remittance from DB to get the original Remittance ID
 	rem, err := h.collectionSvc.GetRemittanceByCSAuthenticationID(transactionID)
 	if err != nil {
 		log.Printf("ERROR: Failed to find remittance %s on 3DS return: %v", transactionID, err)
-		return topRedirect(c, "/checkout/error?message=remittance_not_found")
+		return postMessageResult(c, map[string]string{
+			"event":   "3ds_result",
+			"status":  "ERROR",
+			"message": "remittance_not_found",
+		})
 	}
 
 	// 2. Send validation request to CyberSource
@@ -238,34 +246,37 @@ func (h *collectionHandler) Handle3DSReturn(c echo.Context) error {
 	resp, err := h.collectionSvc.CheckIfAuthorized(req)
 	if err != nil {
 		log.Printf("ERROR: 3DS validation failed for %s: %v", rem.ID, err)
-		return topRedirect(c, "/checkout/error?message="+err.Error())
+		return postMessageResult(c, map[string]string{
+			"event":   "3ds_result",
+			"status":  "ERROR",
+			"message": err.Error(),
+		})
 	}
 
-	// 3. Redirect the TOP-LEVEL window based on response status.
-	// This handler runs inside Cardinal's challenge iframe, so we must use
-	// window.top.location.href to break out of it.
-	switch resp.Status {
-	case domain.CSStatusAuthorized:
-		return topRedirect(c, "/checkout/success?ref="+rem.ID)
-	case domain.CSStatusAuthorizedPendingReview:
-		return topRedirect(c, "/checkout/review?ref="+rem.ID)
-	case domain.CSStatusDeclined, domain.CSStatusRejected:
-		return topRedirect(c, "/checkout/declined?message="+resp.Message)
-	default:
-		return topRedirect(c, "/checkout/error?message=payment_failed")
-	}
+	// 3. Send the authorization result back to the parent window via postMessage.
+	// The frontend listens for this message, closes the challenge iframe,
+	// and redirects the user based on the status.
+	return postMessageResult(c, map[string]string{
+		"event":   "3ds_result",
+		"status":  resp.Status,
+		"message": resp.Message,
+		"ref":     rem.ID,
+	})
 }
 
-// topRedirect returns a small HTML page that redirects the top-level window.
-// This is required because the 3DS return URL is loaded inside Cardinal's
-// challenge iframe; a normal HTTP 302 redirect would stay trapped in the iframe.
-func topRedirect(c echo.Context, url string) error {
+// postMessageResult returns a minimal HTML page that sends the authorization
+// result to the parent window via postMessage. This allows the frontend to
+// break out of the challenge iframe and handle the redirect.
+func postMessageResult(c echo.Context, data map[string]string) error {
+	jsonBytes, _ := json.Marshal(data)
 	html := fmt.Sprintf(`<!DOCTYPE html>
-<html><head><title>Redirecting...</title></head>
+<html><head><title>Processing...</title></head>
 <body>
 <p>Processing payment, please wait...</p>
-<script>window.top.location.href = %q;</script>
-</body></html>`, url)
+<script>
+  window.parent.postMessage(%s, '*');
+</script>
+</body></html>`, string(jsonBytes))
 	return c.HTML(http.StatusOK, html)
 }
 
