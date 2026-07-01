@@ -15,8 +15,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const accountGroup = document.getElementById('account-group');
     const accountLabel = document.getElementById('account-label');
     const accountNumber = document.getElementById('account_number');
-    const phoneGroup = document.getElementById('phone-group');
-    const receiverPhone = document.getElementById('receiver_phone');
     const currentRateDisplay = document.getElementById('current-rate');
     const approxReceiveDisplay = document.getElementById('approx-receive');
 
@@ -78,15 +76,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (type === 'TELEBIRR' || type === 'MPESA') {
             accountGroup.style.display = 'none';
-            phoneGroup.style.display = 'flex';
             accountNumber.required = false;
-            receiverPhone.required = true;
         } else {
             accountGroup.style.display = 'flex';
-            phoneGroup.style.display = 'none';
             accountLabel.textContent = type === 'WITHIN_BOA' ? 'BoA Account Number' : 'Bank Account Number';
             accountNumber.required = true;
-            receiverPhone.required = false;
         }
     });
 
@@ -386,9 +380,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // PA Setup with permanent token
                 const paSetupBody = {
                     id: id,
-                    permanent_token_id: selectedSavedCard.tokenId,
-                    expiration_month: selectedSavedCard.expirationMonth,
-                    expiration_year: selectedSavedCard.expirationYear
+                    permanent_token_id: selectedSavedCard.tokenId
                 };
 
                 const paSetupResp = await fetch('/api/collection/pa-setup', {
@@ -404,28 +396,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Browser info for 3DS 2.x
                 const browserInfo = {
-                    user_agent: navigator.userAgent,
-                    color_depth: String(screen.colorDepth),
-                    screen_width: String(screen.width),
-                    screen_height: String(screen.height),
-                    language: navigator.language || navigator.userLanguage,
-                    time_difference: String(new Date().getTimezoneOffset()),
-                    java_enabled: navigator.javaEnabled(),
-                    javascript_enabled: true,
-                    accept_header: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                    userAgentBrowserValue: navigator.userAgent,
+                    httpBrowserColorDepth: String(screen.colorDepth),
+                    httpBrowserScreenWidth: String(screen.width),
+                    httpBrowserScreenHeight: String(screen.height),
+                    httpBrowserLanguage: navigator.language || navigator.userLanguage,
+                    httpBrowserTimeDifference: String(new Date().getTimezoneOffset()),
+                    httpBrowserJavaEnabled: navigator.javaEnabled ? navigator.javaEnabled() : false,
+                    httpBrowserJavaScriptEnabled: true,
+                    httpAcceptBrowserValue: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
                 };
+                console.log("INFO: Browser Info for 3DS 2.x:", browserInfo);
 
                 // Authorization with permanent token
                 await processAuthorization({
                     id: id,
                     permanent_token_id: selectedSavedCard.tokenId,
-                    expiration_month: selectedSavedCard.expirationMonth,
-                    expiration_year: selectedSavedCard.expirationYear,
                     pa_reference_id: paData.reference_id,
-                    amount: parseFloat(document.getElementById('send_amount').value).toFixed(2),
-                    currency: currentRemittance.send_currency,
-                    sender: senderData,
-                    recipient: recipientData,
                     browser_info: browserInfo,
                     fingerprint_id: fingerprintID
                 });
@@ -482,9 +469,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const paSetupBody = {
                     id: id,
                     transient_token_jti: jti,
-                    transient_token_jwt: token,
-                    expiration_month: month,
-                    expiration_year: year
+                    transient_token_jwt: token
                 };
 
 
@@ -501,15 +486,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Collect browser information for 3DS 2.x Browser Flow
                 const browserInfo = {
-                    user_agent: navigator.userAgent,
-                    color_depth: String(screen.colorDepth),
-                    screen_width: String(screen.width),
-                    screen_height: String(screen.height),
-                    language: navigator.language || navigator.userLanguage,
-                    time_difference: String(new Date().getTimezoneOffset()),
-                    java_enabled: navigator.javaEnabled(),
-                    javascript_enabled: true,
-                    accept_header: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                    userAgentBrowserValue: navigator.userAgent,
+                    httpBrowserColorDepth: String(screen.colorDepth),
+                    httpBrowserScreenWidth: String(screen.width),
+                    httpBrowserScreenHeight: String(screen.height),
+                    httpBrowserLanguage: navigator.language || navigator.userLanguage,
+                    httpBrowserTimeDifference: String(new Date().getTimezoneOffset()),
+                    httpBrowserJavaEnabled: navigator.javaEnabled ? navigator.javaEnabled() : false,
+                    httpBrowserJavaScriptEnabled: true,
+                    httpAcceptBrowserValue: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
                 };
 
                 // Step 6: Authorization Request
@@ -517,13 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     id: id,
                     transient_token_jti: jti,
                     transient_token_jwt: token,
-                    expiration_month: month,
-                    expiration_year: year,
                     pa_reference_id: paData.reference_id,
-                    amount: parseFloat(document.getElementById('send_amount').value).toFixed(2),
-                    currency: currentRemittance.send_currency,
-                    sender: senderData,
-                    recipient: recipientData,
                     browser_info: browserInfo,
                     fingerprint_id: fingerprintID
                 });

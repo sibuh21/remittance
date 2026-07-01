@@ -86,7 +86,7 @@ func (h *remittanceHandler) GetStatus(c echo.Context) error {
 		})
 	}
 
-	return h.formatRemittanceResponse(c, rem)
+	return h.formatRemittanceResponse(c, &rem)
 }
 
 // ListSenderRemittances handles GET /api/remittance/sender/:email

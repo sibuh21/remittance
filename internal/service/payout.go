@@ -179,7 +179,6 @@ func (s *payoutService) TransferWallet(amount, receiverPhoneNumber, provider, re
 		RemitterName:        senderName,
 		RemitterPhonenumber: receiverPhoneNumber,
 	}
-	log.Println("wallet transer request body:===>", req)
 	resp, err := s.boaClient.TransferWallet(req)
 	if err != nil {
 		return nil, fmt.Errorf("BoA wallet transfer failed: %w", err)

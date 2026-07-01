@@ -42,7 +42,6 @@ func (h *collectionHandler) CreateCaptureContext(c echo.Context) error {
 
 func (h *collectionHandler) SetupPayerAuth(c echo.Context) error {
 	byt, _ := io.ReadAll(c.Request().Body)
-	fmt.Println("request body:", string(byt))
 	// Rewind the body so c.Bind can read it
 	c.Request().Body = io.NopCloser(strings.NewReader(string(byt)))
 
@@ -51,7 +50,6 @@ func (h *collectionHandler) SetupPayerAuth(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, echo.Map{"message": "invalid request"})
 	}
 
-	fmt.Printf("Parsed request: %+v\n", req)
 	if req.ID == "" {
 		return c.JSON(http.StatusBadRequest, echo.Map{"message": "id is required in pa-setup request"})
 	}

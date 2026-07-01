@@ -4,7 +4,9 @@ import (
 	"time"
 
 	validation "github.com/go-ozzo/ozzo-validation"
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/shopspring/decimal"
 )
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -210,8 +212,6 @@ type PASetupRequest struct {
 	ID                string `json:"id"`
 	TransientTokenJti string `json:"transient_token_jti"`
 	TransientTokenJWT string `json:"transient_token_jwt,omitempty"`
-	ExpirationMonth   string `json:"expiration_month,omitempty"`
-	ExpirationYear    string `json:"expiration_year,omitempty"`
 	PermanentTokenID  string `json:"permanent_token_id,omitempty"`
 }
 
@@ -225,35 +225,29 @@ type PASetupResponse struct {
 
 // BrowserInfo contains mandatory fields for 3DS 2.x Browser-mode authentication.
 type BrowserInfo struct {
-	UserAgent         string `json:"user_agent"`
-	ColorDepth        string `json:"color_depth"`
-	ScreenWidth       string `json:"screen_width"`
-	ScreenHeight      string `json:"screen_height"`
-	Language          string `json:"language"`
-	TimeDifference    string `json:"time_difference"`
-	AcceptHeader      string `json:"accept_header"`
-	JavaEnabled       bool   `json:"java_enabled"`
-	JavaScriptEnabled bool   `json:"javascript_enabled"`
+	UserAgentBrowserValue        string `json:"userAgentBrowserValue"`
+	HttpBrowserColorDepth        string `json:"httpBrowserColorDepth"`
+	HttpBrowserScreenWidth       string `json:"httpBrowserScreenWidth"`
+	HttpBrowserScreenHeight      string `json:"httpBrowserScreenHeight"`
+	HttpBrowserLanguage          string `json:"httpBrowserLanguage"`
+	HttpBrowserTimeDifference    string `json:"httpBrowserTimeDifference"`
+	HttpAcceptBrowserValue       string `json:"httpAcceptBrowserValue"`
+	HttpBrowserJavaEnabled       bool   `json:"httpBrowserJavaEnabled"`
+	HttpBrowserJavaScriptEnabled bool   `json:"httpBrowserJavaScriptEnabled"`
 }
 
 // AuthorizeRequest (Step 5)
 type AuthorizeRequest struct {
-	ID                          string          `json:"id"`
-	TransientTokenJti           string          `json:"transient_token_jti"`
-	TransientTokenJWT           string          `json:"transient_token_jwt"`
-	IPAddress                   string          `json:"ip_address,omitempty"`
-	PAReferenceId               string          `json:"pa_reference_id"`
-	ExpirationMonth             string          `json:"expiration_month"`
-	ExpirationYear              string          `json:"expiration_year"`
-	PermanentTokenID            string          `json:"permanent_token_id,omitempty"`
-	ShouldTokenize              bool            `json:"should_tokenize,omitempty"`
-	FingerprintID               string          `json:"fingerprint_id,omitempty"` // For Section 6
-	Sender                      RemittanceParty `json:"sender"`
-	Recipient                   RemittanceParty `json:"recipient"`
-	Amount                      string          `json:"amount"`
-	Currency                    string          `json:"currency"`
-	AuthenticationTransactionId string          `json:"authentication_transaction_id,omitempty"`
-	BrowserInfo                 BrowserInfo     `json:"browser_info"`
+	ID                          string       `json:"id"`
+	TransientTokenJti           string       `json:"transient_token_jti"`
+	TransientTokenJWT           string       `json:"transient_token_jwt"`
+	IPAddress                   string       `json:"ip_address,omitempty"`
+	PAReferenceId               string       `json:"pa_reference_id"`
+	PermanentTokenID            string       `json:"permanent_token_id,omitempty"`
+	ShouldTokenize              bool         `json:"should_tokenize,omitempty"`
+	FingerprintID               string       `json:"fingerprint_id,omitempty"` // For Section 6
+	AuthenticationTransactionId string       `json:"authentication_transaction_id,omitempty"`
+	BrowserInfo                 *BrowserInfo `json:"browser_info"`
 }
 
 // ValidateRequest (Step 7)
@@ -298,7 +292,7 @@ type RemittanceParty struct {
 // SenderCard represents a payment token saved for a specific sender.
 type SenderCard struct {
 	ID              string    `json:"id"`
-	SenderEmail     string    `json:"sender_email"`
+	UserID          string    `json:"user_id"`
 	TokenID         string    `json:"token_id"`
 	CardBIN         string    `json:"card_bin"`
 	CardSuffix      string    `json:"card_suffix"`
@@ -428,16 +422,19 @@ type RemittanceRequest struct {
 	SenderPhone   string `json:"sender_phone"`
 
 	// Amount
-	SendAmount     string `json:"send_amount" validate:"required"`
-	SendCurrency   string `json:"send_currency" validate:"required"`
-	TargetCurrency string `json:"target_currency"` // defaults to ETB
+	SendAmount     decimal.Decimal `json:"send_amount" validate:"required"`
+	SendCurrency   string          `json:"send_currency" validate:"required"`
+	TargetCurrency string          `json:"target_currency"` // defaults to ETB
 
 	// Receiver
-	ReceiverName    string `json:"receiver_name" validate:"required"`
-	ReceiverPhone   string `json:"receiver_phone"`
-	ReceiverAddress string `json:"receiver_address"`
-	ReceiverCity    string `json:"receiver_city"`
-	ReceiverCountry string `json:"receiver_country"`
+	ReceiverName       string `json:"receiver_name" validate:"required"`
+	ReceiverPhone      string `json:"receiver_phone" validate:"required"`
+	ReceiverEmail      string `json:"receiver_email" validate:"required"`
+	ReceiverAddress    string `json:"receiver_address" validate:"required"`
+	ReceiverCity       string `json:"receiver_city" validate:"required"`
+	ReceiverState      string `json:"receiver_state" validate:"required"`
+	ReceiverPostalCode string `json:"receiver_postal" validate:"required"`
+	ReceiverCountry    string `json:"receiver_country" validate:"required"`
 
 	// Payout
 	PayoutType    PayoutType `json:"payout_type" validate:"required"` // WITHIN_BOA, OTHER_BANK, TELEBIRR, MPESA
@@ -460,6 +457,13 @@ func (r RemittanceRequest) Validate() error {
 			validation.In("USD", "EUR", "GBP", "CAD", "AUD").Error("unsupported currency"),
 		),
 		validation.Field(&r.ReceiverName, validation.Required.Error("receiver name is required")),
+		validation.Field(&r.ReceiverPhone, validation.Required.Error("receiver phone is required")),
+		validation.Field(&r.ReceiverEmail, validation.Required.Error("receiver email is required")),
+		validation.Field(&r.ReceiverAddress, validation.Required.Error("receiver address is required")),
+		validation.Field(&r.ReceiverCity, validation.Required.Error("receiver city is required")),
+		validation.Field(&r.ReceiverState, validation.Required.Error("receiver state is required")),
+		validation.Field(&r.ReceiverPostalCode, validation.Required.Error("receiver postal code is required")),
+		validation.Field(&r.ReceiverCountry, validation.Required.Error("receiver country is required")),
 		validation.Field(&r.PayoutType,
 			validation.Required.Error("payout type is required"),
 			validation.In(PayoutWithinBoA, PayoutOtherBank, PayoutTelebirr, PayoutMpesa).Error("invalid payout type"),
@@ -471,10 +475,10 @@ func (r RemittanceRequest) Validate() error {
 type RemittanceResponse struct {
 	ID             string           `json:"id"`
 	Status         RemittanceStatus `json:"status"`
-	SendAmount     string           `json:"send_amount"`
+	SendAmount     decimal.Decimal  `json:"send_amount"`
 	SendCurrency   string           `json:"send_currency"`
-	ExchangeRate   float64          `json:"exchange_rate,omitempty"`
-	ReceiveAmount  string           `json:"receive_amount,omitempty"`
+	ExchangeRate   decimal.Decimal  `json:"exchange_rate,omitempty"`
+	ReceiveAmount  decimal.Decimal  `json:"receive_amount,omitempty"`
 	CaptureContext string           `json:"capture_context,omitempty"` // Flex Microform NEW
 	Message        string           `json:"message,omitempty"`
 	CreatedAt      time.Time        `json:"created_at"`
@@ -528,37 +532,41 @@ type Remittance struct {
 	Status                        RemittanceStatus `json:"status"`
 
 	// Inbound (Card Collection)
-	SenderName        string `json:"sender_name"`
-	SenderFirstName   string `json:"sender_first_name"`
-	SenderLastName    string `json:"sender_last_name"`
-	SenderEmail       string `json:"sender_email"`
-	SenderAddress     string `json:"sender_address"`
-	SenderCity        string `json:"sender_city"`
-	SenderState       string `json:"sender_state"`
-	SenderPostalCode  string `json:"sender_postal_code"`
-	SenderCountry     string `json:"sender_country"`
-	SourceAmount      string `json:"source_amount"`
-	SourceCurrency    string `json:"source_currency"`
-	CollectionStatus  string `json:"collection_status,omitempty"`
-	PaymentTokenID    string `json:"payment_token_id,omitempty"`
-	TransientTokenJWT string `json:"transient_token_jwt,omitempty"`
+	SenderName        string          `json:"sender_name"`
+	SenderFirstName   string          `json:"sender_first_name"`
+	SenderLastName    string          `json:"sender_last_name"`
+	SenderEmail       string          `json:"sender_email"`
+	SenderAddress     string          `json:"sender_address"`
+	SenderCity        string          `json:"sender_city"`
+	SenderState       string          `json:"sender_state"`
+	SenderPostalCode  string          `json:"sender_postal_code"`
+	SenderCountry     string          `json:"sender_country"`
+	SourceAmount      decimal.Decimal `json:"source_amount"`
+	SourceCurrency    string          `json:"source_currency"`
+	CollectionStatus  string          `json:"collection_status,omitempty"`
+	PaymentTokenID    string          `json:"payment_token_id,omitempty"`
+	TransientTokenJWT string          `json:"transient_token_jwt,omitempty"`
 
 	// Conversion
-	ExchangeRate   float64 `json:"exchange_rate"`
-	TargetAmount   string  `json:"target_amount"`
-	TargetCurrency string  `json:"target_currency"`
+	ExchangeRate   decimal.Decimal `json:"exchange_rate"`
+	TargetAmount   decimal.Decimal `json:"target_amount"`
+	TargetCurrency string          `json:"target_currency"`
 
 	// Outbound (Bank Payout)
-	ReceiverName     string     `json:"receiver_name"`
-	ReceiverPhone    string     `json:"receiver_phone,omitempty"`
-	ReceiverAddress  string     `json:"receiver_address,omitempty"`
-	ReceiverCity     string     `json:"receiver_city,omitempty"`
-	ReceiverCountry  string     `json:"receiver_country,omitempty"`
-	PayoutType       PayoutType `json:"payout_type"`
-	AccountNumber    string     `json:"account_number,omitempty"`
-	BankID           string     `json:"bank_id,omitempty"`
-	BoAReference     string     `json:"boa_reference,omitempty"`
-	PayoutStatus     string     `json:"payout_status,omitempty"`
+	ReceiverName       string `json:"receiver_name"`
+	ReceiverPhone      string `json:"receiver_phone,omitempty"`
+	ReceiverEmail      string `json:"receiver_email,omitempty"`
+	ReceiverAddress    string `json:"receiver_address,omitempty"`
+	ReceiverCity       string `json:"receiver_city,omitempty"`
+	ReceiverState      string `json:"receiver_state,omitempty"`
+	ReceiverPostalCode string `json:"receiver_postal_code,omitempty"`
+	ReceiverCountry    string `json:"receiver_country,omitempty"`
+
+	PayoutType    PayoutType `json:"payout_type"`
+	AccountNumber string     `json:"account_number,omitempty"`
+	BankID        string     `json:"bank_id,omitempty"`
+	BoAReference  string     `json:"boa_reference,omitempty"`
+	PayoutStatus  string     `json:"payout_status,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -619,11 +627,11 @@ type PayoutService interface {
 // RemittanceService orchestrates the end-to-end remittance flow.
 type RemittanceService interface {
 	InitiateRemittance(req *RemittanceRequest) (*RemittanceResponse, error)
-	ExecutePayout(id string) (*PayoutResult, error)
+	ExecutePayout(id uuid.UUID) (*PayoutResult, error)
 	TriggerManualPayout(req *ManualPayoutRequest) (*PayoutResult, error)
-	GetRemittanceStatus(id string) (*Remittance, error)
-	GetSenderRemittances(email string, status RemittanceStatus) ([]*Remittance, error)
-	GetReceiverRemittances(phone string, status RemittanceStatus) ([]*Remittance, error)
+	GetRemittanceStatus(id string) (Remittance, error)
+	GetSenderRemittances(email string, status RemittanceStatus) ([]Remittance, error)
+	GetReceiverRemittances(phone string, status RemittanceStatus) ([]Remittance, error)
 }
 
 // CollectionHandler handles CyberSource checkout HTTP endpoints.

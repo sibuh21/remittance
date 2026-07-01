@@ -13,6 +13,7 @@ import (
 	"remittance-service/internal/handler"
 	"remittance-service/internal/service"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/spf13/viper"
@@ -43,6 +44,12 @@ func main() {
 	)
 	if err != nil {
 		log.Fatalf("Failed to create CyberSource REST client: %v", err)
+	}
+
+	// ─── Initialize Redis ───────────────────────────────────────────────────
+	rc := domain.InitRedis("localhost", "6379")
+	if rc == nil {
+		log.Fatalf("Failed to initialize Redis")
 	}
 
 	// ─── Initialize Bank of Abyssinia Client (Outbound Payout) ──────────────
@@ -81,7 +88,7 @@ func main() {
 	// We use a pointer or a variable to avoid circular dependency during initialization
 	var remittanceSvc domain.RemittanceService
 
-	onCollected := func(ID string) {
+	onCollected := func(ID uuid.UUID) {
 		log.Printf("INFO: Automatic payout triggered for remittance %s", ID)
 		go func() {
 			_, err := remittanceSvc.ExecutePayout(ID)
@@ -91,8 +98,8 @@ func main() {
 		}()
 	}
 
-	collectionSvc := service.NewCollectionService(csRESTClient, db, cfg.CyberSource.ReturnURL, cfg.CyberSource.MerchantID, onCollected)
-	remittanceSvc = service.NewRemittanceService(collectionSvc, payoutSvc, db, cfg.CyberSource.TargetOrigins)
+	collectionSvc := service.NewCollectionService(csRESTClient, rc, *db, cfg.CyberSource.ReturnURL, cfg.CyberSource.MerchantID, onCollected)
+	remittanceSvc = service.NewRemittanceService(collectionSvc, payoutSvc, *db, cfg.CyberSource.TargetOrigins)
 
 	// ─── Initialize Handlers ────────────────────────────────────────────────
 	collectionHandler := handler.NewCollectionHandler(collectionSvc)
@@ -134,6 +141,22 @@ func main() {
 			echo.HeaderAuthorization,
 		},
 	}))
+	// add error handler middleware to catch errors and return JSON responses
+	e.HTTPErrorHandler = func(err error, c echo.Context) {
+		// log the error
+		log.Printf("ERROR: %v", err)
+
+		// Determine the status code
+		code := http.StatusInternalServerError
+		if he, ok := err.(*echo.HTTPError); ok {
+			code = he.Code
+		}
+
+		// Return JSON response
+		c.JSON(code, echo.Map{
+			"message": err.Error(),
+		})
+	}
 
 	// ─── API Routes ─────────────────────────────────────────────────────────
 
