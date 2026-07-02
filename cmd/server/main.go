@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"remittance-service/internal/boa"
@@ -112,70 +111,70 @@ func main() {
 	e.HideBanner = true
 
 	// === CSP Middleware (MUST BE FIRST) ===
-	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			// Extract origin from return URL to allow devtunnel framing/redirects
-			returnOrigin := ""
-			if parsedURL, err := url.Parse(cfg.CyberSource.ReturnURL); err == nil {
-				returnOrigin = fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
-			}
-			
-			// Determine request origin dynamically
-			scheme := "http"
-			if c.Request().TLS != nil {
-				scheme = "https"
-			}
-			requestHost := c.Request().Host
-			requestOrigin := fmt.Sprintf("%s://%s", scheme, requestHost)
+	// e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+	// 	return func(c echo.Context) error {
+	// 		// Extract origin from return URL to allow devtunnel framing/redirects
+	// 		returnOrigin := ""
+	// 		if parsedURL, err := url.Parse(cfg.CyberSource.ReturnURL); err == nil {
+	// 			returnOrigin = fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+	// 		}
 
-			// Collect all origins to whitelist
-			origins := []string{
-				"'self'",
-				"https://*.cybersource.com",
-				"https://*.cardinalcommerce.com",
-				"https://*.cardinaltrusted.com",
-			}
-			if returnOrigin != "" {
-				origins = append(origins, returnOrigin)
-			}
-			if requestOrigin != "" {
-				origins = append(origins, requestOrigin)
-			}
-			for _, o := range cfg.CORS.AllowedOrigins {
-				if o != "" {
-					origins = append(origins, o)
-				}
-			}
-			for _, o := range cfg.CyberSource.TargetOrigins {
-				if o != "" {
-					origins = append(origins, o)
-				}
-			}
+	// 		// Determine request origin dynamically
+	// 		scheme := "http"
+	// 		if c.Request().TLS != nil {
+	// 			scheme = "https"
+	// 		}
+	// 		requestHost := c.Request().Host
+	// 		requestOrigin := fmt.Sprintf("%s://%s", scheme, requestHost)
 
-			// Deduplicate origins
-			uniqueOrigins := make(map[string]bool)
-			var cleanOrigins []string
-			for _, o := range origins {
-				if !uniqueOrigins[o] {
-					uniqueOrigins[o] = true
-					cleanOrigins = append(cleanOrigins, o)
-				}
-			}
-			allowedDomains := strings.Join(cleanOrigins, " ")
+	// 		// Collect all origins to whitelist
+	// 		origins := []string{
+	// 			"'self'",
+	// 			"https://*.cybersource.com",
+	// 			"https://*.cardinalcommerce.com",
+	// 			"https://*.cardinaltrusted.com",
+	// 		}
+	// 		if returnOrigin != "" {
+	// 			origins = append(origins, returnOrigin)
+	// 		}
+	// 		if requestOrigin != "" {
+	// 			origins = append(origins, requestOrigin)
+	// 		}
+	// 		for _, o := range cfg.CORS.AllowedOrigins {
+	// 			if o != "" {
+	// 				origins = append(origins, o)
+	// 			}
+	// 		}
+	// 		for _, o := range cfg.CyberSource.TargetOrigins {
+	// 			if o != "" {
+	// 				origins = append(origins, o)
+	// 			}
+	// 		}
 
-			// Set the CSP header
-			val := fmt.Sprintf("default-src %s; ", allowedDomains) +
-				fmt.Sprintf("script-src 'unsafe-inline' 'unsafe-eval' blob: %s; ", allowedDomains) +
-				fmt.Sprintf("connect-src %s; ", allowedDomains) +
-				fmt.Sprintf("frame-src %s; ", allowedDomains) +
-				fmt.Sprintf("frame-ancestors %s; ", allowedDomains) +
-				fmt.Sprintf("img-src data: https://img.icons8.com %s; ", allowedDomains) +
-				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-				"font-src 'self' https://fonts.gstatic.com;"
-			c.Response().Header().Set("Content-Security-Policy", val)
-			return next(c)
-		}
-	})
+	// 		// Deduplicate origins
+	// 		uniqueOrigins := make(map[string]bool)
+	// 		var cleanOrigins []string
+	// 		for _, o := range origins {
+	// 			if !uniqueOrigins[o] {
+	// 				uniqueOrigins[o] = true
+	// 				cleanOrigins = append(cleanOrigins, o)
+	// 			}
+	// 		}
+	// 		allowedDomains := strings.Join(cleanOrigins, " ")
+
+	// 		// Set the CSP header
+	// 		val := fmt.Sprintf("default-src %s; ", allowedDomains) +
+	// 			fmt.Sprintf("script-src 'unsafe-inline' 'unsafe-eval' blob: %s; ", allowedDomains) +
+	// 			fmt.Sprintf("connect-src %s; ", allowedDomains) +
+	// 			fmt.Sprintf("frame-src %s; ", allowedDomains) +
+	// 			fmt.Sprintf("frame-ancestors %s; ", allowedDomains) +
+	// 			fmt.Sprintf("img-src data: https://img.icons8.com %s; ", allowedDomains) +
+	// 			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+	// 			"font-src 'self' https://fonts.gstatic.com;"
+	// 		c.Response().Header().Set("Content-Security-Policy", val)
+	// 		return next(c)
+	// 	}
+	// })
 
 	// Middleware
 	e.Use(middleware.Logger())

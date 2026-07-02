@@ -129,30 +129,30 @@ document.addEventListener('DOMContentLoaded', () => {
             const resp = await fetch('/api/collection/config');
             const cfg = await resp.json();
             const merchantID = cfg.merchant_id;
+            const baseURL = "https://h.online-metrix.net/fp";
             
             // Generate a unique session ID
             const sessionID = merchantID + Date.now() + Math.random().toString(36).substring(2, 9);
             fingerprintID = sessionID;
 
             console.log("INFO: Initiating CyberSource Device Profiling. Session ID:", sessionID);
-            console.log("DFP===>", sessionID);
 
             const orgID = "1s4h7ay3"; // Sandbox Org ID
             
             // Inject profiling scripts/tags
             // Source: https://developer.cybersource.com/library/documentation/dev_guides/Decision_Manager_Using_REST_API/html/topics/device_fingerprinting.htm
             const pDiv = document.createElement('div');
-            pDiv.style.background = `url(https://tmtest.cybersource.com/fp/clear.png?org_id=${orgID}&session_id=${sessionID}&m=1)`;
+            pDiv.style.background =`url(${baseURL}/clear.png?org_id=${orgID}&session_id=${sessionID}&m=1)`;    
             pDiv.style.width = "1px";
             pDiv.style.height = "1px";
             
             const img = document.createElement('img');
-            img.src = `https://tmtest.cybersource.com/fp/clear.png?org_id=${orgID}&session_id=${sessionID}&m=2`;
+            img.src =`${baseURL}/clear.png?org_id=${orgID}&session_id=${sessionID}&m=2`;
             img.alt = "";
             pDiv.appendChild(img);
 
             const script = document.createElement('script');
-            script.src = `https://tmtest.cybersource.com/fp/check.js?org_id=${orgID}&session_id=${sessionID}`;
+            script.src =  `${baseURL}/check.js?org_id=${orgID}&session_id=${sessionID}`;
             pDiv.appendChild(script);
 
             document.body.appendChild(pDiv);
