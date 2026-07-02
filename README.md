@@ -221,7 +221,7 @@ sequenceDiagram
    - For `MPESA`: `GET /getName/mpesa/{phone}`
 3. **Fetches exchange rate** via BoA: `GET /rate/USD`
 4. **Generates CyberSource Capture Context** via: `POST /microform/v2/sessions`
-5. **Saves the transaction** to PostgreSQL with status `COLLECTION_PENDING`
+5. **Saves the remittance** to PostgreSQL with status `COLLECTION_PENDING`
 
 #### Response: `200 OK`
 
@@ -769,7 +769,7 @@ stateDiagram-v2
 |--------|-------|-------------|
 | `POST` | `/api/remittance` | Initiate remittance (validate + generate capture context) |
 | `POST` | `/api/remittance/payout` | Manually trigger payout for a collected remittance |
-| `GET` | `/api/remittance/status/:id` | Get transaction status by remittance ID |
+| `GET` | `/api/remittance/status/:id` | Get remittance status by ID |
 | `GET` | `/api/remittance/sender/:email` | List remittances by sender email |
 | `GET` | `/api/remittance/receiver/:phone` | List remittances by receiver phone |
 
@@ -782,7 +782,7 @@ stateDiagram-v2
 | `POST` | `/api/collection/authorize` | Authorize payment (also handles post-challenge validation) |
 | `GET` | `/api/collection/saved-cards` | Retrieve saved cards for returning senders |
 | `POST` | `/api/collection/return` | 3DS challenge return handler (HTML + postMessage) |
-| `POST` | `/api/collection/review` | Approve/reject transactions pending manual review |
+| `POST` | `/api/collection/review` | Approve/reject remittances pending manual review |
 | `POST` | `/api/collection/webhook` | CyberSource Decision Manager webhook |
 
 ### Payout (Bank of Abyssinia Outbound)
@@ -793,7 +793,7 @@ stateDiagram-v2
 | `GET` | `/api/payout/rate/:currency` | Get exchange rate (USD, EUR, etc.) |
 | `GET` | `/api/payout/banks` | List available banks for other-bank transfer |
 | `GET` | `/api/payout/balance` | Get settlement account balance |
-| `GET` | `/api/payout/status/:id` | Check payout transaction status at BoA |
+| `GET` | `/api/payout/status/:id` | Check payout remittance status at BoA |
 
 ### Static / Health
 

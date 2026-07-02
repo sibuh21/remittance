@@ -107,15 +107,12 @@ func (c *Client) Authenticate() error {
 	req.Header.Set("x-api-key", c.apiKey)
 
 	resp, err := c.httpClient.Do(req)
-	log.Printf("DEBUG: BoA auth response: %v, %v", resp, err)
 	if err != nil {
 		return fmt.Errorf("boa auth: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	log.Printf("DEBUG: BoA auth response: %d", resp.StatusCode)
-	log.Printf("DEBUG: BoA auth response body: %s", string(body))
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("boa auth: unexpected status %d: %s", resp.StatusCode, string(body))
 	}
@@ -178,7 +175,6 @@ func (c *Client) FetchAccountName(accountID string) (*domain.BoAAccountInfo, err
 		return nil, fmt.Errorf("boa fetch name: parse error: %w", err)
 	}
 
-	log.Printf("DEBUG: BoA account raw response: %s", string(body))
 
 	if strings.ToLower(resp.Header.Status) != "success" || len(resp.Body) == 0 {
 		return nil, fmt.Errorf("boa fetch name: account not found or error status: %s", resp.Header.Status)
@@ -203,7 +199,6 @@ func (c *Client) FetchAccountNameOtherBank(bankID, accountID string) (*domain.Bo
 		return nil, fmt.Errorf("boa fetch name other bank: parse error: %w", err)
 	}
 
-	log.Printf("DEBUG: Other bank account raw response: %s", string(body))
 
 	if strings.ToLower(resp.Header.Status) != "success" || len(resp.Body) == 0 {
 		return nil, &domain.BoAError{
@@ -211,7 +206,6 @@ func (c *Client) FetchAccountNameOtherBank(bankID, accountID string) (*domain.Bo
 		}
 	}
 
-	log.Printf("DEBUG: Other bank account info: %+v", resp.Body[0])
 	return &resp.Body[0], nil
 }
 
@@ -254,7 +248,6 @@ func (c *Client) FetchNameMpesa(phoneNumber string) (*domain.BoANameCheckRespons
 // TransferWithin initiates a transfer within Bank of Abyssinia.
 func (c *Client) TransferWithin(req *domain.BoATransferWithinRequest) (*domain.BoAAPIResponse, error) {
 	req.ClientID = c.clientID
-	log.Printf("DEBUG: BoA transfer within request: %v", req)
 
 	body, err := c.doPost("/transferWithin", req)
 	if err != nil {
@@ -360,7 +353,6 @@ func (c *Client) GetExchangeRate(baseCurrency string) (*domain.BoAAPIResponse, e
 	if err != nil {
 		return nil, fmt.Errorf("boa exchange rate: %w", err)
 	}
-	log.Printf("exchange error %v body %s", err, string(body))
 	var resp struct {
 		Header domain.BoAResponseHeader `json:"Header"`
 		Body   []domain.BoACurrencyRate `json:"Body"`
@@ -376,7 +368,6 @@ func (c *Client) GetExchangeRate(baseCurrency string) (*domain.BoAAPIResponse, e
 	// Map old API response format to new internal representation for compatibility
 	rateStr := resp.Body[0].BuyRate
 	rate, _ := strconv.ParseFloat(rateStr, 64)
-	fmt.Println("rate", rate)
 	return &domain.BoAAPIResponse{
 		Header: resp.Header,
 		Body: map[string]any{
@@ -429,7 +420,6 @@ func (c *Client) doGet(path string) ([]byte, error) {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	log.Printf("resp: %v,status code: %d  error: %v", resp.Body, resp.StatusCode, err)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

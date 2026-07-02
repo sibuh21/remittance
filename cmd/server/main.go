@@ -13,6 +13,7 @@ import (
 	"remittance-service/internal/handler"
 	"remittance-service/internal/service"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/spf13/viper"
@@ -43,6 +44,12 @@ func main() {
 	)
 	if err != nil {
 		log.Fatalf("Failed to create CyberSource REST client: %v", err)
+	}
+
+	// ─── Initialize Redis ───────────────────────────────────────────────────
+	rc := domain.InitRedis("localhost", "6379")
+	if rc == nil {
+		log.Fatalf("Failed to initialize Redis")
 	}
 
 	// ─── Initialize Bank of Abyssinia Client (Outbound Payout) ──────────────
@@ -81,18 +88,18 @@ func main() {
 	// We use a pointer or a variable to avoid circular dependency during initialization
 	var remittanceSvc domain.RemittanceService
 
-	onCollected := func(remittanceID string) {
-		log.Printf("INFO: Automatic payout triggered for remittance %s", remittanceID)
+	onCollected := func(ID uuid.UUID) {
+		log.Printf("INFO: Automatic payout triggered for remittance %s", ID)
 		go func() {
-			_, err := remittanceSvc.ExecutePayout(remittanceID)
+			_, err := remittanceSvc.ExecutePayout(ID)
 			if err != nil {
-				log.Printf("ERROR: Automatic payout failed for %s: %v", remittanceID, err)
+				log.Printf("ERROR: Automatic payout failed for %s: %v", ID, err)
 			}
 		}()
 	}
 
-	collectionSvc := service.NewCollectionService(csRESTClient, db, cfg.CyberSource.ReturnURL, onCollected)
-	remittanceSvc = service.NewRemittanceService(collectionSvc, payoutSvc, db, cfg.CyberSource.TargetOrigins)
+	collectionSvc := service.NewCollectionService(csRESTClient, rc, *db, cfg.CyberSource.ReturnURL, cfg.CyberSource.MerchantID, onCollected)
+	remittanceSvc = service.NewRemittanceService(collectionSvc, payoutSvc, *db, cfg.CyberSource.TargetOrigins)
 
 	// ─── Initialize Handlers ────────────────────────────────────────────────
 	collectionHandler := handler.NewCollectionHandler(collectionSvc)
@@ -102,6 +109,72 @@ func main() {
 	// ─── Setup Echo Server ──────────────────────────────────────────────────
 	e := echo.New()
 	e.HideBanner = true
+
+	// === CSP Middleware (MUST BE FIRST) ===
+	// e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+	// 	return func(c echo.Context) error {
+	// 		// Extract origin from return URL to allow devtunnel framing/redirects
+	// 		returnOrigin := ""
+	// 		if parsedURL, err := url.Parse(cfg.CyberSource.ReturnURL); err == nil {
+	// 			returnOrigin = fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+	// 		}
+
+	// 		// Determine request origin dynamically
+	// 		scheme := "http"
+	// 		if c.Request().TLS != nil {
+	// 			scheme = "https"
+	// 		}
+	// 		requestHost := c.Request().Host
+	// 		requestOrigin := fmt.Sprintf("%s://%s", scheme, requestHost)
+
+	// 		// Collect all origins to whitelist
+	// 		origins := []string{
+	// 			"'self'",
+	// 			"https://*.cybersource.com",
+	// 			"https://*.cardinalcommerce.com",
+	// 			"https://*.cardinaltrusted.com",
+	// 		}
+	// 		if returnOrigin != "" {
+	// 			origins = append(origins, returnOrigin)
+	// 		}
+	// 		if requestOrigin != "" {
+	// 			origins = append(origins, requestOrigin)
+	// 		}
+	// 		for _, o := range cfg.CORS.AllowedOrigins {
+	// 			if o != "" {
+	// 				origins = append(origins, o)
+	// 			}
+	// 		}
+	// 		for _, o := range cfg.CyberSource.TargetOrigins {
+	// 			if o != "" {
+	// 				origins = append(origins, o)
+	// 			}
+	// 		}
+
+	// 		// Deduplicate origins
+	// 		uniqueOrigins := make(map[string]bool)
+	// 		var cleanOrigins []string
+	// 		for _, o := range origins {
+	// 			if !uniqueOrigins[o] {
+	// 				uniqueOrigins[o] = true
+	// 				cleanOrigins = append(cleanOrigins, o)
+	// 			}
+	// 		}
+	// 		allowedDomains := strings.Join(cleanOrigins, " ")
+
+	// 		// Set the CSP header
+	// 		val := fmt.Sprintf("default-src %s; ", allowedDomains) +
+	// 			fmt.Sprintf("script-src 'unsafe-inline' 'unsafe-eval' blob: %s; ", allowedDomains) +
+	// 			fmt.Sprintf("connect-src %s; ", allowedDomains) +
+	// 			fmt.Sprintf("frame-src %s; ", allowedDomains) +
+	// 			fmt.Sprintf("frame-ancestors %s; ", allowedDomains) +
+	// 			fmt.Sprintf("img-src data: https://img.icons8.com %s; ", allowedDomains) +
+	// 			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+	// 			"font-src 'self' https://fonts.gstatic.com;"
+	// 		c.Response().Header().Set("Content-Security-Policy", val)
+	// 		return next(c)
+	// 	}
+	// })
 
 	// Middleware
 	e.Use(middleware.Logger())
@@ -118,6 +191,22 @@ func main() {
 			echo.HeaderAuthorization,
 		},
 	}))
+	// add error handler middleware to catch errors and return JSON responses
+	e.HTTPErrorHandler = func(err error, c echo.Context) {
+		// log the error
+		log.Printf("ERROR: %v", err)
+
+		// Determine the status code
+		code := http.StatusInternalServerError
+		if he, ok := err.(*echo.HTTPError); ok {
+			code = he.Code
+		}
+
+		// Return JSON response
+		c.JSON(code, echo.Map{
+			"message": err.Error(),
+		})
+	}
 
 	// ─── API Routes ─────────────────────────────────────────────────────────
 
@@ -126,7 +215,7 @@ func main() {
 	// === Remittance (End-to-End Flow) ===
 	// POST /api/remittance             - Initiate a remittance (validate + checkout fields)
 	// POST /api/remittance/payout      - Manually trigger payout for a collected remittance
-	// GET  /api/remittance/status/:id   - Get transaction status
+	// GET  /api/remittance/status/:id   - Get remittance status
 	api.POST("/remittance", remittanceHandler.InitiateRemittance)
 	api.POST("/remittance/payout", remittanceHandler.TriggerPayout)
 	api.GET("/remittance/status/:id", remittanceHandler.GetStatus)
@@ -141,53 +230,24 @@ func main() {
 	api.POST("/collection/review", collectionHandler.ReviewPayment)
 	api.POST("/collection/webhook", collectionHandler.HandleWebhook)
 	api.GET("/collection/saved-cards", collectionHandler.GetSenderCards)
-	// 3DS Return Handler (Step 7 callback)
-	api.POST("/collection/return", func(c echo.Context) error {
-		return c.HTML(http.StatusOK, `
-			<!DOCTYPE html>
-			<html>
-			<head><title>Authentication Complete</title></head>
-			<body>
-				<script>
-					// Try direct function call (works if same origin)
-					try {
-						if (window.parent && typeof window.parent.onchallengecomplete === 'function') {
-							window.parent.onchallengecomplete();
-						} else if (window.opener && typeof window.opener.onchallengecomplete === 'function') {
-							window.opener.onchallengecomplete();
-						} else if (window.top && typeof window.top.onchallengecomplete === 'function') {
-							window.top.onchallengecomplete();
-						}
-					} catch(e) {
-						console.error("Direct origin access blocked, trying postMessage");
-					}
-					// Use postMessage to bypass CORS if devtunnels vs localhost
-					try {
-						if (window.parent) window.parent.postMessage({ type: 'challenge_complete' }, '*');
-						if (window.top) window.top.postMessage({ type: 'challenge_complete' }, '*');
-					} catch (e) {}
-				</script>
-				<div style="text-align:center;font-family:sans-serif;margin-top:20px;">
-					<h3>Verification Complete</h3>
-					<p>This window will close automatically.</p>
-				</div>
-			</body>
-			</html>
-		`)
-	})
+	api.GET("/collection/config", collectionHandler.GetConfig)
+
+	// 3DS Return (Moved to root to bypass group middleware issues)
+	api.POST("/collection/return", collectionHandler.Handle3DSReturn)
+	// e.Match([]string{http.MethodGet, http.MethodPost}, "/api/collection/return/", collectionHandler.Handle3DSReturn)
 
 	// === Payout (Bank of Abyssinia Outbound) ===
 	// POST /api/payout/validate      - Validate beneficiary account/wallet
 	// GET  /api/payout/rate/:currency - Get exchange rate
 	// GET  /api/payout/banks          - Get available banks for other-bank transfer
 	// GET  /api/payout/balance        - Get settlement account balance
-	// GET  /api/payout/status/:id     - Check payout transaction status
+	// GET  /api/payout/status/:id     - Check payout remittance status
 	payout := api.Group("/payout")
 	payout.POST("/validate", payoutHandler.ValidateBeneficiary)
 	payout.GET("/rate/:currency", payoutHandler.GetExchangeRate)
 	payout.GET("/banks", payoutHandler.GetBanks)
 	payout.GET("/balance", payoutHandler.GetBalance)
-	payout.GET("/status/:id", payoutHandler.CheckTransactionStatus)
+	payout.GET("/status/:id", payoutHandler.CheckRemittanceStatus)
 
 	// ─── Checkout Result Pages ──────────────────────────────────────────────
 	e.GET("/checkout/success", func(c echo.Context) error {

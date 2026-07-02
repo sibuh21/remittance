@@ -179,7 +179,6 @@ func (s *payoutService) TransferWallet(amount, receiverPhoneNumber, provider, re
 		RemitterName:        senderName,
 		RemitterPhonenumber: receiverPhoneNumber,
 	}
-	log.Println("wallet transer request body:===>", req)
 	resp, err := s.boaClient.TransferWallet(req)
 	if err != nil {
 		return nil, fmt.Errorf("BoA wallet transfer failed: %w", err)
@@ -198,19 +197,19 @@ func (s *payoutService) TransferWallet(amount, receiverPhoneNumber, provider, re
 	}, nil
 }
 
-// CheckTransactionStatus checks the status of a previously initiated BoA transaction.
-func (s *payoutService) CheckTransactionStatus(transactionID string) (*domain.TransactionStatusResponse, error) {
-	log.Printf("INFO: Checking BoA transaction status: %s", transactionID)
+// CheckRemittanceStatus checks the status of a previously initiated BoA remittance.
+func (s *payoutService) CheckRemittanceStatus(id string) (*domain.RemittanceStatusResponse, error) {
+	log.Printf("INFO: Checking BoA remittance status: %s", id)
 
-	resp, err := s.boaClient.GetTransactionStatus(transactionID)
+	resp, err := s.boaClient.GetTransactionStatus(id)
 	if err != nil {
-		return nil, fmt.Errorf("BoA transaction status check failed: %w", err)
+		return nil, fmt.Errorf("BoA remittance status check failed: %w", err)
 	}
 
-	return &domain.TransactionStatusResponse{
-		TransactionID: transactionID,
-		Status:        resp.Header.Status,
-		Detail:        resp.Body,
+	return &domain.RemittanceStatusResponse{
+		ID:     id,
+		Status: resp.Header.Status,
+		Detail: resp.Body,
 	}, nil
 }
 

@@ -15,8 +15,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const accountGroup = document.getElementById('account-group');
     const accountLabel = document.getElementById('account-label');
     const accountNumber = document.getElementById('account_number');
-    const phoneGroup = document.getElementById('phone-group');
-    const receiverPhone = document.getElementById('receiver_phone');
     const currentRateDisplay = document.getElementById('current-rate');
     const approxReceiveDisplay = document.getElementById('approx-receive');
 
@@ -47,10 +45,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentRemittance = null;
     let captureContext = null;
     let savedCards = [];
-    let selectedSavedCard = null; // stores { tokenId, expirationMonth, expirationYear }
+    let fingerprintID = null;
 
     // ─── Initial Load ────────────────────────────────────────────────────────
     fetchRate();
+    initProfiling();
 
     // ─── SDK Loading ─────────────────────────────────────────────────────────
     const FLEX_SDK_URL = 'https://flex.cybersource.com/cybersource/assets/microform/0.11/flex-microform.min.js';
@@ -77,15 +76,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (type === 'TELEBIRR' || type === 'MPESA') {
             accountGroup.style.display = 'none';
-            phoneGroup.style.display = 'flex';
             accountNumber.required = false;
-            receiverPhone.required = true;
         } else {
             accountGroup.style.display = 'flex';
-            phoneGroup.style.display = 'none';
             accountLabel.textContent = type === 'WITHIN_BOA' ? 'BoA Account Number' : 'Bank Account Number';
             accountNumber.required = true;
-            receiverPhone.required = false;
         }
     });
 
@@ -106,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateReceiveAmount() {
         const amount = parseFloat(sendAmount.value) || 0;
         const total = amount * currentRate;
-        approxReceiveDisplay.textContent = `${total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ETB`;
+        approxReceiveDisplay.textContent = `${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ETB`;
     }
 
     sendAmount.addEventListener('input', updateReceiveAmount);
@@ -126,6 +121,44 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         } catch (err) {
             console.error('Failed to load banks', err);
+        }
+    }
+
+    async function initProfiling() {
+        try {
+            const resp = await fetch('/api/collection/config');
+            const cfg = await resp.json();
+            const merchantID = cfg.merchant_id;
+            const baseURL = "https://h.online-metrix.net/fp";
+            
+            // Generate a unique session ID
+            const sessionID = merchantID + Date.now() + Math.random().toString(36).substring(2, 9);
+            fingerprintID = sessionID;
+
+            console.log("INFO: Initiating CyberSource Device Profiling. Session ID:", sessionID);
+
+            const orgID = "1s4h7ay3"; // Sandbox Org ID
+            
+            // Inject profiling scripts/tags
+            // Source: https://developer.cybersource.com/library/documentation/dev_guides/Decision_Manager_Using_REST_API/html/topics/device_fingerprinting.htm
+            const pDiv = document.createElement('div');
+            pDiv.style.background =`url(${baseURL}/clear.png?org_id=${orgID}&session_id=${sessionID}&m=1)`;    
+            pDiv.style.width = "1px";
+            pDiv.style.height = "1px";
+            
+            const img = document.createElement('img');
+            img.src =`${baseURL}/clear.png?org_id=${orgID}&session_id=${sessionID}&m=2`;
+            img.alt = "";
+            pDiv.appendChild(img);
+
+            const script = document.createElement('script');
+            script.src =  `${baseURL}/check.js?org_id=${orgID}&session_id=${sessionID}`;
+            pDiv.appendChild(script);
+
+            document.body.appendChild(pDiv);
+            
+        } catch (err) {
+            console.error("ERROR: Failed to initiate profiling:", err);
         }
     }
 
@@ -330,15 +363,24 @@ document.addEventListener('DOMContentLoaded', () => {
             country: document.getElementById('receiver_country').value
         };
 
+        // Validate that we have a remittance ID from the initiation step
+        // Validate that we have a remittance ID from the initiation step
+        const id = currentRemittance.id
+        if (!id) {
+            console.error('ID MISSING', currentRemittance);
+            alert('ID MISSING: ' + JSON.stringify(currentRemittance));
+            showPaymentError('Technical error: No Transaction Reference found. Please refresh and try again.');
+            setPaymentLoading(false);
+            return;
+        }
+
         // ── SAVED CARD FLOW ──
         if (selectedSavedCard) {
             try {
                 // PA Setup with permanent token
                 const paSetupBody = {
-                    remittance_id: currentRemittance.remittance_id,
-                    permanent_token_id: selectedSavedCard.tokenId,
-                    expiration_month: selectedSavedCard.expirationMonth,
-                    expiration_year: selectedSavedCard.expirationYear
+                    id: id,
+                    permanent_token_id: selectedSavedCard.tokenId
                 };
 
                 const paSetupResp = await fetch('/api/collection/pa-setup', {
@@ -352,17 +394,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 // DDC
                 await performDDC(paData.device_data_collection_url, paData.access_token);
 
+                // Browser info for 3DS 2.x
+                const browserInfo = {
+                    userAgentBrowserValue: navigator.userAgent,
+                    httpBrowserColorDepth: String(screen.colorDepth),
+                    httpBrowserScreenWidth: String(screen.width),
+                    httpBrowserScreenHeight: String(screen.height),
+                    httpBrowserLanguage: navigator.language || navigator.userLanguage,
+                    httpBrowserTimeDifference: String(new Date().getTimezoneOffset()),
+                    httpBrowserJavaEnabled: navigator.javaEnabled ? navigator.javaEnabled() : false,
+                    httpBrowserJavaScriptEnabled: true,
+                    httpAcceptBrowserValue: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                };
+                console.log("INFO: Browser Info for 3DS 2.x:", browserInfo);
+
                 // Authorization with permanent token
                 await processAuthorization({
-                    remittance_id: currentRemittance.remittance_id,
+                    id: id,
                     permanent_token_id: selectedSavedCard.tokenId,
-                    expiration_month: selectedSavedCard.expirationMonth,
-                    expiration_year: selectedSavedCard.expirationYear,
                     pa_reference_id: paData.reference_id,
-                    amount: parseFloat(document.getElementById('send_amount').value).toFixed(2),
-                    currency: currentRemittance.send_currency,
-                    sender: senderData,
-                    recipient: recipientData
+                    browser_info: browserInfo,
+                    fingerprint_id: fingerprintID
                 });
 
             } catch (err) {
@@ -407,46 +459,52 @@ document.addEventListener('DOMContentLoaded', () => {
                     const payload = JSON.parse(window.atob(base64));
                     jti = payload.jti;
                 } catch (e) {
-                    console.error('DEBUG: Failed to parse JTI from JWT:', e);
                     jti = token; // Last resort
                 }
             }
 
-            
+
             try {
                 // Step 4: PA Setup
                 const paSetupBody = {
-                    remittance_id: currentRemittance.remittance_id,
+                    id: id,
                     transient_token_jti: jti,
-                    transient_token_jwt: token,
-                    expiration_month: month,
-                    expiration_year: year
+                    transient_token_jwt: token
                 };
-                
+
 
                 const paSetupResp = await fetch('/api/collection/pa-setup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(paSetupBody)
                 });
-                
+
                 const paData = await paSetupResp.json();
 
                 // Step 5: Device Data Collection (DDC)
                 await performDDC(paData.device_data_collection_url, paData.access_token);
 
+                // Collect browser information for 3DS 2.x Browser Flow
+                const browserInfo = {
+                    userAgentBrowserValue: navigator.userAgent,
+                    httpBrowserColorDepth: String(screen.colorDepth),
+                    httpBrowserScreenWidth: String(screen.width),
+                    httpBrowserScreenHeight: String(screen.height),
+                    httpBrowserLanguage: navigator.language || navigator.userLanguage,
+                    httpBrowserTimeDifference: String(new Date().getTimezoneOffset()),
+                    httpBrowserJavaEnabled: navigator.javaEnabled ? navigator.javaEnabled() : false,
+                    httpBrowserJavaScriptEnabled: true,
+                    httpAcceptBrowserValue: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                };
+
                 // Step 6: Authorization Request
                 await processAuthorization({
-                    remittance_id: currentRemittance.remittance_id,
+                    id: id,
                     transient_token_jti: jti,
                     transient_token_jwt: token,
-                    expiration_month: month,
-                    expiration_year: year,
                     pa_reference_id: paData.reference_id,
-                    amount: parseFloat(document.getElementById('send_amount').value).toFixed(2),
-                    currency: currentRemittance.send_currency,
-                    sender: senderData,
-                    recipient: recipientData
+                    browser_info: browserInfo,
+                    fingerprint_id: fingerprintID
                 });
 
             } catch (err) {
@@ -466,13 +524,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 </form>
                 <iframe name="ddc-iframe" style="display:none;"></iframe>
             `;
-            
+
             // CyberSource DDC completion listener
             const handleDDCMessage = (event) => {
                 try {
                     const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
                     if (data && data.MessageType === 'profile.completed') {
-                        console.log('DDC Profiling completed');
                         window.removeEventListener('message', handleDDCMessage);
                         resolve();
                     }
@@ -480,9 +537,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Ignore non-JSON messages
                 }
             };
-            
+
             window.addEventListener('message', handleDDCMessage);
-            
+
             const form = document.getElementById('ddc-form');
             form.submit();
 
@@ -496,6 +553,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ─── Step 6 & 7: Authorization & Challenge ──────────────────────────────
     async function processAuthorization(authReq) {
+        console.log("AUTH_REQUEST_SENT===>", authReq);
+        if (authReq.fingerprint_id) {
+            console.log("DFP===>", authReq.fingerprint_id);
+        }
         const response = await fetch('/api/collection/authorize', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -506,7 +567,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (authResp.status === 'AUTHORIZED' || authResp.status === 'AUTHORIZED_PENDING_REVIEW') {
             const redirectUrl = authResp.status === 'AUTHORIZED_PENDING_REVIEW' ? '/checkout/review' : '/checkout/success';
-            window.location.href = `${redirectUrl}?ref=${currentRemittance.remittance_id}`;
+            window.location.href = `${redirectUrl}?ref=${authReq.id}`;
         } else if (authResp.status === 'PENDING_AUTHENTICATION') {
             // STEP 7: Challenge Required
             await handleChallenge(authResp.step_up_url, authResp.access_token, authResp.authentication_transaction_id, authReq);
@@ -516,55 +577,54 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleChallenge(url, jwt, txnId, authReq) {
-        return new Promise((resolve, reject) => {
-            paymentModal.classList.add('hidden');
-            challengeModal.classList.remove('hidden');
+        paymentModal.classList.add('hidden');
+        challengeModal.classList.remove('hidden');
 
-            challengeContainer.innerHTML = `
-                <form id="challenge-form" method="POST" action="${url}" target="challenge-iframe">
-                    <input type="hidden" name="JWT" value="${jwt}">
-                </form>
-                <iframe name="challenge-iframe" width="100%" height="400" border="0"></iframe>
-            `;
+        challengeContainer.innerHTML = `
+            <form id="challenge-form" method="POST" action="${url}" target="challenge-iframe">
+                <input type="hidden" name="JWT" value="${jwt}">
+            </form>
+            <iframe name="challenge-iframe" width="100%" height="500" border="0" style="border-radius: 12px; border: 1px solid var(--color-border);"></iframe>
+        `;
 
-            document.getElementById('challenge-form').submit();
+        document.getElementById('challenge-form').submit();
 
-            const challengeCompleteHandler = async () => {
-                try {
-                    // Inject the returned transaction ID into the original full auth request
-                    authReq.authentication_transaction_id = txnId;
-                    
-                    const validateResp = await fetch('/api/collection/authorize', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(authReq)
-                    });
-                    const finalData = await validateResp.json();
-                    if (finalData.status === 'AUTHORIZED') {
-                        window.location.href = `/checkout/success?ref=${currentRemittance.remittance_id}`;
-                    } else {
-                        throw new Error('3DS Validation failed');
-                    }
-                } catch (err) {
-                    showPaymentError(err.message);
-                    challengeModal.classList.add('hidden');
-                    paymentModal.classList.remove('hidden');
-                    setPaymentLoading(false);
+        // Listen for the postMessage from the 3DS return handler
+        const handleReturnMessage = (event) => {
+            try {
+                const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                if (!data || data.event !== '3ds_result') return;
+
+                // Clean up listener
+                window.removeEventListener('message', handleReturnMessage);
+
+                // Close challenge modal
+                challengeModal.classList.add('hidden');
+
+                console.log("3DS_RESULT===>", data);
+
+                // Redirect based on authorization status
+                switch (data.status) {
+                    case 'AUTHORIZED':
+                        window.location.href = `/checkout/success?ref=${data.ref}`;
+                        break;
+                    case 'AUTHORIZED_PENDING_REVIEW':
+                        window.location.href = `/checkout/review?ref=${data.ref}`;
+                        break;
+                    case 'DECLINED':
+                    case 'REJECTED':
+                        window.location.href = `/checkout/declined?message=${encodeURIComponent(data.message || 'Payment declined')}`;
+                        break;
+                    default:
+                        window.location.href = `/checkout/error?message=${encodeURIComponent(data.message || 'Payment failed')}`;
+                        break;
                 }
-            };
-            // Support both direct window execution and cross-origin postMessage
-            window.onchallengecomplete = challengeCompleteHandler;
-            
-            const messageListener = (event) => {
-                console.log("Received window message:", event.data, "from origin:", event.origin);
-                if (event.data && event.data.type === 'challenge_complete') {
-                    window.removeEventListener('message', messageListener);
-                    challengeCompleteHandler();
-                }
-            };
-            window.addEventListener('message', messageListener);
+            } catch (e) {
+                // Ignore non-JSON or unrelated messages
+            }
+        };
 
-        });
+        window.addEventListener('message', handleReturnMessage);
     }
 
     // ─── UI Helpers ────────────────────────────────────────────────────────

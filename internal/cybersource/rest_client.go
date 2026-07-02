@@ -90,6 +90,8 @@ func (c *RESTClient) AuthorizePayment(req *PaymentRequest) (*PaymentResponse, er
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("cybersource: failed to parse payment response: %w", err)
 	}
+	marshal, _ := json.Marshal(resp)
+	fmt.Println("marshal in cybersource", string(marshal))
 
 	return &resp, nil
 }
@@ -127,6 +129,12 @@ func (c *RESTClient) ReverseAuthorization(paymentID string) error {
 	return nil
 }
 
+// GetAuthenticationStatus checks the result of a 3DS authentication challenge.
+func (c *RESTClient) GetAuthenticationStatus(authenticationID string) ([]byte, error) {
+	path := fmt.Sprintf("/risk/v1/authentications/%s", authenticationID)
+	return c.doGet(path)
+}
+
 // doPost handles REST POST requests with HTTP Signature authentication.
 func (c *RESTClient) doPost(path string, payload any) ([]byte, error) {
 	jsonData, err := json.Marshal(payload)
@@ -141,6 +149,41 @@ func (c *RESTClient) doPost(path string, payload any) ([]byte, error) {
 
 	reqURL := c.baseURL + path
 	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("cybersource: failed to create request: %w", err)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cybersource: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("cybersource: failed to read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return respBody, fmt.Errorf("cybersource: unexpected status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return respBody, nil
+}
+
+// doGet handles REST GET requests with HTTP Signature authentication.
+func (c *RESTClient) doGet(path string) ([]byte, error) {
+	headers, err := c.GenerateHTTPSignature(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	reqURL := c.baseURL + path
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("cybersource: failed to create request: %w", err)
 	}

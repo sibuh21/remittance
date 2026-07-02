@@ -39,6 +39,9 @@ var CountryMap = map[string]CountryCode{
 	"POLAND":           {Alpha2: "PL", Alpha3: "POL"},
 	"PL":               {Alpha2: "PL", Alpha3: "POL"},
 	"POL":              {Alpha2: "PL", Alpha3: "POL"},
+	"MALAYSIA":         {Alpha2: "MY", Alpha3: "MYS"},
+	"MYS":              {Alpha2: "MY", Alpha3: "MYS"},
+	"MY":               {Alpha2: "MY", Alpha3: "MYS"},
 }
 
 // GetCountryCodes resolves a string (name or code) to its ISO Alpha-2 and Alpha-3 codes.
@@ -54,7 +57,7 @@ func GetCountryCodes(input string) (alpha2, alpha3 string) {
 	if len(upper) == 3 {
 		return "", upper
 	}
-	return "US", "USA" // Default to US for this integration
+	return upper, "" // Return as is if unknown but non-empty
 }
 
 // StateMap provides mapping for common state names to 2-letter codes (US only for now).

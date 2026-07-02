@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"log"
 	"net/http"
 
 	"remittance-service/internal/domain"
@@ -63,7 +62,6 @@ func (h *payoutHandler) GetExchangeRate(c echo.Context) error {
 			"message": "currency parameter is required",
 		})
 	}
-	log.Printf("handler======>")
 	rate, err := h.svc.GetExchangeRate(currency)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
@@ -105,20 +103,20 @@ func (h *payoutHandler) GetBalance(c echo.Context) error {
 	return c.JSON(http.StatusOK, balance)
 }
 
-// CheckTransactionStatus handles GET /api/payout/status/:id
+// CheckRemittanceStatus handles GET /api/payout/status/:id
 // Checks the status of a previously initiated payout transaction.
-func (h *payoutHandler) CheckTransactionStatus(c echo.Context) error {
-	txnID := c.Param("id")
-	if txnID == "" {
+func (h *payoutHandler) CheckRemittanceStatus(c echo.Context) error {
+	id := c.Param("id")
+	if id == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{
-			"message": "transaction id parameter is required",
+			"message": "remittance id parameter is required",
 		})
 	}
 
-	status, err := h.svc.CheckTransactionStatus(txnID)
+	status, err := h.svc.CheckRemittanceStatus(id)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"message": "failed to check transaction status",
+			"message": "failed to check remittance status",
 			"detail":  err.Error(),
 		})
 	}

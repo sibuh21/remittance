@@ -4,7 +4,9 @@ import (
 	"time"
 
 	validation "github.com/go-ozzo/ozzo-validation"
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/shopspring/decimal"
 )
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -116,13 +118,13 @@ func (r CheckoutRequest) Validate() error {
 
 // PaymentResult is the response after processing a CyberSource webhook.
 type PaymentResult struct {
-	ID              string        `json:"id"`
+	CsTransactionID string        `json:"cs_transaction_id"`
 	Status          PaymentStatus `json:"status"`
 	Amount          string        `json:"amount"`
 	Currency        string        `json:"currency"`
 	AuthCode        string        `json:"auth_code,omitempty"`
 	ReferenceNumber string        `json:"reference_number,omitempty"`
-	RemittanceID    string        `json:"remittance_id,omitempty"`
+	ID              string        `json:"id,omitempty"`
 	Message         string        `json:"message,omitempty"`
 	ProcessedAt     time.Time     `json:"processed_at"`
 }
@@ -133,6 +135,42 @@ type CyberSourceNotification struct {
 	Decision              string `json:"decision" form:"decision"`
 	RequestID             string `json:"request_id" form:"request_id"`
 	ReasonCode            string `json:"reason_code" form:"reason_code"`
+}
+
+// TSUWebhookPayload represents a Token Status Update (TSU) notification from CyberSource.
+type TSUWebhookPayload struct {
+	EventObject       string `json:"eventObject,omitempty"` // For validation if needed
+	PaymentInstrument struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+		Card  struct {
+			ExpirationMonth string `json:"expirationMonth"`
+			ExpirationYear  string `json:"expirationYear"`
+		} `json:"card"`
+	} `json:"paymentInstrument"`
+	Token struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+		Card  struct {
+			ExpirationMonth string `json:"expirationMonth"`
+			ExpirationYear  string `json:"expirationYear"`
+		} `json:"card"`
+	} `json:"token"`
+	InstrumentIdentifier struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+	} `json:"instrumentIdentifier"`
+}
+
+// CaseManagementWebhookPayload represents a webhook from CyberSource Decision Manager for a manual review decision.
+type CaseManagementWebhookPayload struct {
+	EventID   string `json:"eventId"`
+	EventType string `json:"eventType"`
+	EventDate string `json:"eventDate"`
+	Payload   struct {
+		MerchantReferenceCode string `json:"merchantReferenceCode"`
+		CaseID                string `json:"caseId"`
+	} `json:"payload"`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -171,43 +209,50 @@ type CaptureContextRequest struct {
 
 // PASetupRequest
 type PASetupRequest struct {
-	RemittanceID      string `json:"remittance_id"`
+	ID                string `json:"id"`
 	TransientTokenJti string `json:"transient_token_jti"`
 	TransientTokenJWT string `json:"transient_token_jwt,omitempty"`
-	ExpirationMonth   string `json:"expiration_month,omitempty"`
-	ExpirationYear    string `json:"expiration_year,omitempty"`
 	PermanentTokenID  string `json:"permanent_token_id,omitempty"`
 }
 
 // PASetupResponse
 type PASetupResponse struct {
+	ID                      string `json:"id"`
 	AccessToken             string `json:"access_token"`
 	DeviceDataCollectionUrl string `json:"device_data_collection_url"`
 	ReferenceId             string `json:"reference_id"`
 }
 
+// BrowserInfo contains mandatory fields for 3DS 2.x Browser-mode authentication.
+type BrowserInfo struct {
+	UserAgentBrowserValue        string `json:"userAgentBrowserValue"`
+	HttpBrowserColorDepth        string `json:"httpBrowserColorDepth"`
+	HttpBrowserScreenWidth       string `json:"httpBrowserScreenWidth"`
+	HttpBrowserScreenHeight      string `json:"httpBrowserScreenHeight"`
+	HttpBrowserLanguage          string `json:"httpBrowserLanguage"`
+	HttpBrowserTimeDifference    string `json:"httpBrowserTimeDifference"`
+	HttpAcceptBrowserValue       string `json:"httpAcceptBrowserValue"`
+	HttpBrowserJavaEnabled       bool   `json:"httpBrowserJavaEnabled"`
+	HttpBrowserJavaScriptEnabled bool   `json:"httpBrowserJavaScriptEnabled"`
+}
+
 // AuthorizeRequest (Step 5)
 type AuthorizeRequest struct {
-	RemittanceID      string          `json:"remittance_id"`
-	TransientTokenJti string          `json:"transient_token_jti"`
-	TransientTokenJWT string          `json:"transient_token_jwt"`
-	IPAddress         string          `json:"ip_address,omitempty"`
-	PAReferenceId     string          `json:"pa_reference_id"`
-	ExpirationMonth   string          `json:"expiration_month"`
-	ExpirationYear    string          `json:"expiration_year"`
-	PermanentTokenID  string          `json:"permanent_token_id,omitempty"`
-	ShouldTokenize    bool            `json:"should_tokenize,omitempty"`
-	FingerprintID     string          `json:"fingerprint_id,omitempty"` // For Section 6
-	Sender            RemittanceParty `json:"sender"`
-	Recipient         RemittanceParty `json:"recipient"`
-	Amount                      string          `json:"amount"`
-	Currency                    string          `json:"currency"`
-	AuthenticationTransactionId string          `json:"authentication_transaction_id,omitempty"`
+	ID                          string       `json:"id"`
+	TransientTokenJti           string       `json:"transient_token_jti"`
+	TransientTokenJWT           string       `json:"transient_token_jwt"`
+	IPAddress                   string       `json:"ip_address,omitempty"`
+	PAReferenceId               string       `json:"pa_reference_id"`
+	PermanentTokenID            string       `json:"permanent_token_id,omitempty"`
+	ShouldTokenize              bool         `json:"should_tokenize,omitempty"`
+	FingerprintID               string       `json:"fingerprint_id,omitempty"` // For Section 6
+	AuthenticationTransactionId string       `json:"authentication_transaction_id,omitempty"`
+	BrowserInfo                 *BrowserInfo `json:"browser_info"`
 }
 
 // ValidateRequest (Step 7)
 type ValidateRequest struct {
-	RemittanceID                string `json:"remittance_id"`
+	ID                          string `json:"id"`
 	AuthenticationTransactionId string `json:"authentication_transaction_id"`
 }
 
@@ -247,7 +292,7 @@ type RemittanceParty struct {
 // SenderCard represents a payment token saved for a specific sender.
 type SenderCard struct {
 	ID              string    `json:"id"`
-	SenderEmail     string    `json:"sender_email"`
+	UserID          string    `json:"user_id"`
 	TokenID         string    `json:"token_id"`
 	CardBIN         string    `json:"card_bin"`
 	CardSuffix      string    `json:"card_suffix"`
@@ -260,7 +305,7 @@ type SenderCard struct {
 // AuthorizeResponse
 type AuthorizeResponse struct {
 	Status                      string `json:"status"` // AUTHORIZED, PENDING_AUTHENTICATION, DECLINED, ERROR
-	RemittanceID                string `json:"remittance_id"`
+	ID                          string `json:"id"`
 	StepUpUrl                   string `json:"step_up_url,omitempty"`
 	AccessToken                 string `json:"access_token,omitempty"`
 	Pareq                       string `json:"pareq,omitempty"`
@@ -377,16 +422,19 @@ type RemittanceRequest struct {
 	SenderPhone   string `json:"sender_phone"`
 
 	// Amount
-	SendAmount     string `json:"send_amount" validate:"required"`
-	SendCurrency   string `json:"send_currency" validate:"required"`
-	TargetCurrency string `json:"target_currency"` // defaults to ETB
+	SendAmount     decimal.Decimal `json:"send_amount" validate:"required"`
+	SendCurrency   string          `json:"send_currency" validate:"required"`
+	TargetCurrency string          `json:"target_currency"` // defaults to ETB
 
 	// Receiver
-	ReceiverName    string `json:"receiver_name" validate:"required"`
-	ReceiverPhone   string `json:"receiver_phone"`
-	ReceiverAddress string `json:"receiver_address"`
-	ReceiverCity    string `json:"receiver_city"`
-	ReceiverCountry string `json:"receiver_country"`
+	ReceiverName       string `json:"receiver_name" validate:"required"`
+	ReceiverPhone      string `json:"receiver_phone" validate:"required"`
+	ReceiverEmail      string `json:"receiver_email" validate:"required"`
+	ReceiverAddress    string `json:"receiver_address" validate:"required"`
+	ReceiverCity       string `json:"receiver_city" validate:"required"`
+	ReceiverState      string `json:"receiver_state" validate:"required"`
+	ReceiverPostalCode string `json:"receiver_postal" validate:"required"`
+	ReceiverCountry    string `json:"receiver_country" validate:"required"`
 
 	// Payout
 	PayoutType    PayoutType `json:"payout_type" validate:"required"` // WITHIN_BOA, OTHER_BANK, TELEBIRR, MPESA
@@ -396,8 +444,8 @@ type RemittanceRequest struct {
 
 // ManualPayoutRequest is used for manual payout triggers.
 type ManualPayoutRequest struct {
-	RemittanceID string `json:"remittance_id"`
-	Phone        string `json:"phone,omitempty"` // used for receiver verification
+	ID    string `json:"id"`
+	Phone string `json:"phone,omitempty"` // used for receiver verification
 }
 
 func (r RemittanceRequest) Validate() error {
@@ -409,6 +457,13 @@ func (r RemittanceRequest) Validate() error {
 			validation.In("USD", "EUR", "GBP", "CAD", "AUD").Error("unsupported currency"),
 		),
 		validation.Field(&r.ReceiverName, validation.Required.Error("receiver name is required")),
+		validation.Field(&r.ReceiverPhone, validation.Required.Error("receiver phone is required")),
+		validation.Field(&r.ReceiverEmail, validation.Required.Error("receiver email is required")),
+		validation.Field(&r.ReceiverAddress, validation.Required.Error("receiver address is required")),
+		validation.Field(&r.ReceiverCity, validation.Required.Error("receiver city is required")),
+		validation.Field(&r.ReceiverState, validation.Required.Error("receiver state is required")),
+		validation.Field(&r.ReceiverPostalCode, validation.Required.Error("receiver postal code is required")),
+		validation.Field(&r.ReceiverCountry, validation.Required.Error("receiver country is required")),
 		validation.Field(&r.PayoutType,
 			validation.Required.Error("payout type is required"),
 			validation.In(PayoutWithinBoA, PayoutOtherBank, PayoutTelebirr, PayoutMpesa).Error("invalid payout type"),
@@ -418,12 +473,12 @@ func (r RemittanceRequest) Validate() error {
 
 // RemittanceResponse is the response after initiating a remittance.
 type RemittanceResponse struct {
-	RemittanceID   string           `json:"remittance_id"`
+	ID             string           `json:"id"`
 	Status         RemittanceStatus `json:"status"`
-	SendAmount     string           `json:"send_amount"`
+	SendAmount     decimal.Decimal  `json:"send_amount"`
 	SendCurrency   string           `json:"send_currency"`
-	ExchangeRate   float64          `json:"exchange_rate,omitempty"`
-	ReceiveAmount  string           `json:"receive_amount,omitempty"`
+	ExchangeRate   decimal.Decimal  `json:"exchange_rate,omitempty"`
+	ReceiveAmount  decimal.Decimal  `json:"receive_amount,omitempty"`
 	CaptureContext string           `json:"capture_context,omitempty"` // Flex Microform NEW
 	Message        string           `json:"message,omitempty"`
 	CreatedAt      time.Time        `json:"created_at"`
@@ -458,39 +513,55 @@ type BeneficiaryCheckResponse struct {
 	Message      string `json:"message,omitempty"`
 }
 
-// TransactionStatusResponse wraps BoA transaction status check results.
-type TransactionStatusResponse struct {
-	TransactionID string         `json:"transaction_id"`
-	Status        string         `json:"status"`
-	Detail        map[string]any `json:"detail,omitempty"`
+// RemittanceStatusResponse wraps BoA transaction status check results.
+type RemittanceStatusResponse struct {
+	ID     string         `json:"id"`
+	Status string         `json:"status"`
+	Detail map[string]any `json:"detail,omitempty"`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Persistence Models
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Transaction represents a full record of a remittance for database storage.
-type Transaction struct {
-	ID           string           `json:"id"`
-	RemittanceID string           `json:"remittance_id"`
-	Status       RemittanceStatus `json:"status"`
+// Remittance represents a full record of a remittance for database storage.
+type Remittance struct {
+	ID                            string           `json:"id"`
+	CsTransactionID               string           `json:"cs_transaction_id"`
+	CsAuthenticationTransactionID string           `json:"cs_authentication_transaction_id"`
+	Status                        RemittanceStatus `json:"status"`
 
 	// Inbound (Card Collection)
-	SenderName       string `json:"sender_name"`
-	SenderEmail      string `json:"sender_email"`
-	SourceAmount     string `json:"source_amount"`
-	SourceCurrency   string `json:"source_currency"`
-	CybersourceRef   string `json:"cybersource_ref,omitempty"`
-	CollectionStatus string `json:"collection_status,omitempty"`
+	SenderName        string          `json:"sender_name"`
+	SenderFirstName   string          `json:"sender_first_name"`
+	SenderLastName    string          `json:"sender_last_name"`
+	SenderEmail       string          `json:"sender_email"`
+	SenderAddress     string          `json:"sender_address"`
+	SenderCity        string          `json:"sender_city"`
+	SenderState       string          `json:"sender_state"`
+	SenderPostalCode  string          `json:"sender_postal_code"`
+	SenderCountry     string          `json:"sender_country"`
+	SourceAmount      decimal.Decimal `json:"source_amount"`
+	SourceCurrency    string          `json:"source_currency"`
+	CollectionStatus  string          `json:"collection_status,omitempty"`
+	PaymentTokenID    string          `json:"payment_token_id,omitempty"`
+	TransientTokenJWT string          `json:"transient_token_jwt,omitempty"`
 
 	// Conversion
-	ExchangeRate   float64 `json:"exchange_rate"`
-	TargetAmount   string  `json:"target_amount"`
-	TargetCurrency string  `json:"target_currency"`
+	ExchangeRate   decimal.Decimal `json:"exchange_rate"`
+	TargetAmount   decimal.Decimal `json:"target_amount"`
+	TargetCurrency string          `json:"target_currency"`
 
 	// Outbound (Bank Payout)
-	ReceiverName  string     `json:"receiver_name"`
-	ReceiverPhone string     `json:"receiver_phone,omitempty"`
+	ReceiverName       string `json:"receiver_name"`
+	ReceiverPhone      string `json:"receiver_phone,omitempty"`
+	ReceiverEmail      string `json:"receiver_email,omitempty"`
+	ReceiverAddress    string `json:"receiver_address,omitempty"`
+	ReceiverCity       string `json:"receiver_city,omitempty"`
+	ReceiverState      string `json:"receiver_state,omitempty"`
+	ReceiverPostalCode string `json:"receiver_postal_code,omitempty"`
+	ReceiverCountry    string `json:"receiver_country,omitempty"`
+
 	PayoutType    PayoutType `json:"payout_type"`
 	AccountNumber string     `json:"account_number,omitempty"`
 	BankID        string     `json:"bank_id,omitempty"`
@@ -511,11 +582,19 @@ type CollectionService interface {
 	CreateCaptureContext(origins []string) (string, error)
 	SetupPASetup(req *PASetupRequest) (*PASetupResponse, error)
 	AuthorizePayment(req *AuthorizeRequest) (*AuthorizeResponse, error)
-	ValidateAndAuthorize(req *ValidateRequest) (*AuthorizeResponse, error)
-	ReviewPayment(remittanceID string, approve bool) error
+	CheckIfAuthorized(req *ValidateRequest) (*AuthorizeResponse, error)
+	ReviewPayment(id string, approve bool) error
 	ProcessWebhook(notification *CyberSourceNotification) error
+	ProcessTSUWebhook(payload *TSUWebhookPayload) error
+	ProcessCaseManagementWebhook(payload *CaseManagementWebhookPayload) error
 	GetSenderCards(email string) ([]*SenderCard, error)
-	UpdateCollectionResult(remittanceID, cybersourceRef, collectionStatus, status string) error
+	GetConfig() (map[string]string, error)
+	UpdateCollectionResult(id, csTransactionID, csAuthTransactionID, collectionStatus, status, paymentTokenID, transientTokenJWT string) error
+	UpdatePayoutResult(id, boaRef, payoutStatus, status string) error
+	GetRemittanceByID(id string) (*Remittance, error)
+	GetRemittanceByCSAuthenticationID(authID string) (*Remittance, error)
+	GetRemittancesBySender(email string, status string) ([]*Remittance, error)
+	GetRemittancesByReceiver(phone string, status string) ([]*Remittance, error)
 }
 
 // BoAClient defines the interface for interacting with Bank of Abyssinia APIs.
@@ -528,7 +607,7 @@ type BoAClient interface {
 	TransferOtherBank(req *BoAOtherBankTransferRequest) (*BoAAPIResponse, error)
 	TransferWallet(req *BoAWalletTransferRequest) (*BoAAPIResponse, error)
 	GetBankIDs() ([]BoABankInfo, error)
-	GetTransactionStatus(transactionID string) (*BoAAPIResponse, error)
+	GetTransactionStatus(id string) (*BoAAPIResponse, error)
 	GetExchangeRate(baseCurrency string) (*BoAAPIResponse, error)
 	GetBalance() (*BoAAPIResponse, error)
 }
@@ -539,7 +618,7 @@ type PayoutService interface {
 	TransferWithinBoA(amount, accountNumber, reference string) (*PayoutResult, error)
 	TransferOtherBank(amount, bankID, accountNumber, receiverName, reference string) (*PayoutResult, error)
 	TransferWallet(amount, receiverPhoneNumber, provider, receiverName, senderName, senderPhoneNumber, reference string) (*PayoutResult, error)
-	CheckTransactionStatus(transactionID string) (*TransactionStatusResponse, error)
+	CheckRemittanceStatus(id string) (*RemittanceStatusResponse, error)
 	GetExchangeRate(baseCurrency string) (*ExchangeRateResponse, error)
 	GetBalance() (*BoABalanceResponse, error)
 	GetBanks() ([]BoABankInfo, error)
@@ -548,11 +627,11 @@ type PayoutService interface {
 // RemittanceService orchestrates the end-to-end remittance flow.
 type RemittanceService interface {
 	InitiateRemittance(req *RemittanceRequest) (*RemittanceResponse, error)
-	ExecutePayout(remittanceID string) (*PayoutResult, error)
+	ExecutePayout(id uuid.UUID) (*PayoutResult, error)
 	TriggerManualPayout(req *ManualPayoutRequest) (*PayoutResult, error)
-	GetTransactionStatus(id string) (*Transaction, error)
-	GetSenderRemittances(email string, status RemittanceStatus) ([]*Transaction, error)
-	GetReceiverRemittances(phone string, status RemittanceStatus) ([]*Transaction, error)
+	GetRemittanceStatus(id string) (Remittance, error)
+	GetSenderRemittances(email string, status RemittanceStatus) ([]Remittance, error)
+	GetReceiverRemittances(phone string, status RemittanceStatus) ([]Remittance, error)
 }
 
 // CollectionHandler handles CyberSource checkout HTTP endpoints.
@@ -561,10 +640,12 @@ type CollectionHandler interface {
 	CreateCaptureContext(c echo.Context) error
 	SetupPayerAuth(c echo.Context) error
 	AuthorizePayment(c echo.Context) error
-	ValidateAndAuthorize(c echo.Context) error
+	CheckIfAuthorized(c echo.Context) error
 	ReviewPayment(c echo.Context) error
 	HandleWebhook(c echo.Context) error
 	GetSenderCards(c echo.Context) error
+	Handle3DSReturn(c echo.Context) error
+	GetConfig(c echo.Context) error
 }
 
 // PayoutHandler handles Bank of Abyssinia payout HTTP endpoints.
@@ -573,7 +654,7 @@ type PayoutHandler interface {
 	GetExchangeRate(c echo.Context) error
 	GetBanks(c echo.Context) error
 	GetBalance(c echo.Context) error
-	CheckTransactionStatus(c echo.Context) error
+	CheckRemittanceStatus(c echo.Context) error
 }
 
 // RemittanceHandler handles full remittance flow HTTP endpoints.

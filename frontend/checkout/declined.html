@@ -5,6 +5,11 @@
     <link rel="stylesheet" href="../styles.css">
 </head>
 <body>
+    <script>
+        if (window.top !== window.self) {
+            window.top.location.href = window.location.href;
+        }
+    </script>
     <div class="result-container">
         <div class="result-card">
             <div class="icon-box error">✕</div>
