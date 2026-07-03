@@ -85,8 +85,7 @@ func (h *collectionHandler) AuthorizePayment(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{"message": err.Error()})
 	}
-	marshal, _ := json.Marshal(resp)
-	fmt.Println("marshal", string(marshal))
+
 	return c.JSON(http.StatusOK, resp)
 }
 

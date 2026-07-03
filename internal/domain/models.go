@@ -180,6 +180,7 @@ type CaseManagementWebhookPayload struct {
 const (
 	// CSStatus values returned by CyberSource REST API
 	CSStatusAuthorized              = "AUTHORIZED"
+	CSStatusAAccepted               = "ACCEPTED"
 	CSStatusAuthorizedPendingReview = "AUTHORIZED_PENDING_REVIEW"
 	CSStatusPendingAuth             = "PENDING_AUTHENTICATION"
 	CSStatusDeclined                = "DECLINED"

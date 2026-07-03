@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+type Cybersource interface {
+	CreateCaptureContext(req *CaptureContextRequest) (string, error)
+	PASetup(req *PASetupRequest) (*PASetupResponse, error)
+	AuthorizePayment(req *PaymentRequest) (*PaymentResponse, error)
+	ReverseAuthorization(paymentID string) error
+	GetAuthenticationStatus(authenticationID string) ([]byte, error)
+}
+
 // RESTClient encapsulates CyberSource REST API interactions.
 type RESTClient struct {
 	merchantID   string

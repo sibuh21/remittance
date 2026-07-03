@@ -268,9 +268,9 @@ type PASetupTokenInfo struct {
 }
 
 type PASetupPaymentInfo struct {
-	Customer             *CustomerRef  `json:"customer,omitempty"`
-	InstrumentIdentifier *TMSReference `json:"instrumentIdentifier,omitempty"`
-	Card                 *CardInfo     `json:"card,omitempty"`
+	Customer          *CustomerRef  `json:"customer,omitempty"`
+	PaymentInstrument *TMSReference `json:"paymentInstrument,omitempty"`
+	Card              *CardInfo     `json:"card,omitempty"`
 }
 
 type PASetupResponse struct {

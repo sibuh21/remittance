@@ -72,16 +72,16 @@ func (s *collectionService) SetupPASetup(req *domain.PASetupRequest) (*domain.PA
 	}
 
 	if req.PermanentTokenID != "" {
-		card, err := s.db.GetCardByToken(context.Background(), sql.NullString{String: req.PermanentTokenID, Valid: true})
-		if err != nil {
-			return nil, err
-		}
+		// card, err := s.db.GetCardByToken(context.Background(), sql.NullString{String: req.PermanentTokenID, Valid: true})
+		// if err != nil {
+		// 	return nil, err
+		// }
 		paReq.PaymentInformation = &cybersource.PASetupPaymentInfo{
-			InstrumentIdentifier: &cybersource.TMSReference{ID: req.PermanentTokenID},
-			Card: &cybersource.CardInfo{
-				ExpirationMonth: card.ExpirationMonth,
-				ExpirationYear:  card.ExpirationYear,
-			},
+			PaymentInstrument: &cybersource.TMSReference{ID: req.PermanentTokenID},
+			// Card: &cybersource.CardInfo{
+			// 	ExpirationMonth: card.ExpirationMonth,
+			// 	ExpirationYear:  card.ExpirationYear,
+			// },
 		}
 	} else {
 		paReq.TokenInformation = &cybersource.PASetupTokenInfo{
@@ -243,16 +243,17 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 	if req.PermanentTokenID != "" {
 		// Use stored permanent token (Card-on-File)
 		// get card by token id
-		card, err := s.db.GetCardByToken(context.Background(), sql.NullString{String: req.PermanentTokenID, Valid: true})
-		if err != nil {
-			return nil, err
-		}
+		// card, err := s.db.GetCardByToken(context.Background(), sql.NullString{String: req.PermanentTokenID, Valid: true})
+		// if err != nil {
+		// 	return nil, err
+		// }
 		creq.PaymentInformation = &cybersource.PaymentInfo{
-			InstrumentIdentifier: &cybersource.TMSReference{ID: req.PermanentTokenID},
-			Card: &cybersource.CardInfo{
-				ExpirationMonth: card.ExpirationMonth,
-				ExpirationYear:  card.ExpirationYear,
-			},
+			PaymentInstrument: &cybersource.TMSReference{ID: req.PermanentTokenID},
+			// InstrumentIdentifier: &cybersource.TMSReference{ID: req.PermanentTokenID},
+			// Card: &cybersource.CardInfo{
+			// 	ExpirationMonth: card.ExpirationMonth,
+			// 	ExpirationYear:  card.ExpirationYear,
+			// },
 		}
 		// Flag as stored credential for Card-on-File compliance - Line 584
 		creq.ProcessingInformation.AuthorizationOptions.Initiator = &cybersource.Initiator{
@@ -293,12 +294,13 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 	paymentToken := ""
 	if resp.TokenInformation != nil {
 		if resp.TokenInformation.InstrumentIdentifier != nil {
-			paymentToken = resp.TokenInformation.InstrumentIdentifier.ID
-		} else if resp.TokenInformation.PaymentInstrument != nil {
 			paymentToken = resp.TokenInformation.PaymentInstrument.ID
-		} else if resp.TokenInformation.Customer != nil {
-			paymentToken = resp.TokenInformation.Customer.ID
 		}
+		//  else if resp.TokenInformation.PaymentInstrument != nil {
+		// 	paymentToken = resp.TokenInformation.InstrumentIdentifier.ID
+		// } else if resp.TokenInformation.Customer != nil {
+		// 	paymentToken = resp.TokenInformation.Customer.ID
+		// }
 		domainResp.PaymentTokenID = paymentToken
 	}
 	var senderCardRef *uuid.UUID
@@ -382,23 +384,25 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 		return nil, fmt.Errorf("failed to fetch user for validation: %v", err)
 	}
 
-	var cardInfo *database.SenderCard
-	paymentTokenID := ""
+	paymentInstrumentID := ""
 	if t.SenderCardID.Valid {
 		c, err := s.db.GetCardByID(context.Background(), t.SenderCardID.UUID)
-		if err == nil {
-			cardInfo = &c
-			if c.TokenID.Valid {
-				paymentTokenID = c.TokenID.String
-			}
+		if err != nil {
+			return nil, err
 		}
+
+		paymentInstrumentID = c.TokenID.String
+
 	}
 	transientTokenJWT := ""
-	if paymentTokenID == "" {
+	if paymentInstrumentID == "" {
 		tt, err := s.redisClient.Get("transient_token_" + req.ID).Result()
 		if err == nil {
 			transientTokenJWT = tt
 		}
+	}
+	if paymentInstrumentID == "" && transientTokenJWT == "" {
+		return nil, fmt.Errorf("no payment method found for remittance %s", req.ID)
 	}
 
 	senderAlpha2 := func() string {
@@ -414,13 +418,13 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 			Capture: true,
 			ActionList: func() []string {
 				list := []string{domain.ActionAuthorize, domain.ActionValidateConsumerAuth}
-				if paymentTokenID == "" {
+				if paymentInstrumentID == "" {
 					list = append(list, domain.ActionTokenCreate)
 				}
 				return list
 			}(),
 			ActionTokenTypes: func() []string {
-				if paymentTokenID == "" {
+				if paymentInstrumentID == "" {
 					return []string{"instrumentIdentifier", "paymentInstrument"}
 				}
 				return nil
@@ -432,7 +436,7 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 					Initiator: &cybersource.FundingInitiator{Type: domain.FundingInitiatorSender},
 				},
 				Initiator: func() *cybersource.Initiator {
-					if paymentTokenID != "" {
+					if paymentInstrumentID != "" {
 						return &cybersource.Initiator{
 							Type:                 "customer",
 							StoredCredentialUsed: "true",
@@ -460,17 +464,17 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 		},
 	}
 
-	if paymentTokenID != "" {
+	if paymentInstrumentID != "" {
 		paReq.PaymentInformation = &cybersource.PaymentInfo{
-			InstrumentIdentifier: &cybersource.TMSReference{ID: paymentTokenID},
+			PaymentInstrument: &cybersource.TMSReference{ID: paymentInstrumentID},
 		}
 
-		if cardInfo != nil {
-			paReq.PaymentInformation.Card = &cybersource.CardInfo{
-				ExpirationMonth: cardInfo.ExpirationMonth.String,
-				ExpirationYear:  cardInfo.ExpirationYear.String,
-			}
-		}
+		// if cardInfo != nil {
+		// 	paReq.PaymentInformation.Card = &cybersource.CardInfo{
+		// 		ExpirationMonth: cardInfo.ExpirationMonth.String,
+		// 		ExpirationYear:  cardInfo.ExpirationYear.String,
+		// 	}
+		// }
 	} else if transientTokenJWT != "" {
 		paReq.TokenInformation = &cybersource.TokenInfo{
 			TransientTokenJWT: transientTokenJWT,
@@ -509,37 +513,34 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 	if err != nil {
 		return nil, err
 	}
-
-	paymentToken := paymentTokenID
+	var usedExistingCard bool
+	if paymentInstrumentID != "" {
+		usedExistingCard = true
+	}
+	domainResp.PaymentTokenID = paymentInstrumentID
 	if resp.TokenInformation != nil {
-		if resp.TokenInformation.InstrumentIdentifier != nil {
-			paymentToken = resp.TokenInformation.InstrumentIdentifier.ID
-		} else if resp.TokenInformation.PaymentInstrument != nil {
-			paymentToken = resp.TokenInformation.PaymentInstrument.ID
-		} else if resp.TokenInformation.Customer != nil {
-			paymentToken = resp.TokenInformation.Customer.ID
+		if resp.TokenInformation.PaymentInstrument != nil {
+			domainResp.PaymentTokenID = resp.TokenInformation.PaymentInstrument.ID
 		}
-		domainResp.PaymentTokenID = paymentToken
 	}
 
 	var savedCardID *uuid.UUID
-	if user.Email != "" && paymentToken != "" && cardInfo == nil {
-		transientTokenJWT, err := s.redisClient.Get("transient_token_" + req.ID).Result()
+	if !usedExistingCard && (domainResp.Status == domain.CSStatusAuthorized || domainResp.Status == domain.CSStatusAAccepted) {
+
 		var bin, suffix, expM, expY, brand sql.NullString
-		if err == nil {
-			if cardMetadata, err := domain.DecodeTransientToken(transientTokenJWT); err == nil && cardMetadata != nil && cardMetadata.Content.PaymentInformation.Card.Number.Bin != "" {
-				bin = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.Number.Bin, Valid: true}
-				suffix = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.Number.MaskedValue[len(cardMetadata.Content.PaymentInformation.Card.Number.MaskedValue)-4:], Valid: true}
-				expM = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.ExpirationMonth.Value, Valid: true}
-				expY = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.ExpirationYear.Value, Valid: true}
-				brand = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.Type.Value, Valid: true}
-			}
+
+		if cardMetadata, err := domain.DecodeTransientToken(transientTokenJWT); err == nil && cardMetadata != nil {
+			bin = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.Number.Bin, Valid: true}
+			suffix = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.Number.MaskedValue[len(cardMetadata.Content.PaymentInformation.Card.Number.MaskedValue)-4:], Valid: true}
+			expM = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.ExpirationMonth.Value, Valid: true}
+			expY = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.ExpirationYear.Value, Valid: true}
+			brand = sql.NullString{String: cardMetadata.Content.PaymentInformation.Card.Type.Value, Valid: true}
 		}
 
 		sc, err := s.db.SaveSenderCard(context.Background(), database.SaveSenderCardParams{
 			ID:              uuid.New(),
 			UserID:          user.ID.String(),
-			TokenID:         sql.NullString{String: paymentToken, Valid: true},
+			TokenID:         sql.NullString{String: resp.TokenInformation.PaymentInstrument.ID, Valid: resp.TokenInformation.PaymentInstrument.ID != ""},
 			CardBin:         bin,
 			CardSuffix:      suffix,
 			CardBrand:       brand,
@@ -549,29 +550,32 @@ func (s *collectionService) CheckIfAuthorized(req *domain.ValidateRequest) (*dom
 		if err == nil {
 			savedCardID = &sc.ID
 		}
-	} else if cardInfo != nil {
-		savedCardID = &cardInfo.ID
 	}
 
-	authID := req.AuthenticationTransactionId
-	if resp.ConsumerAuthenticationInfo != nil && resp.ConsumerAuthenticationInfo.AuthenticationTransactionId != "" {
-		authID = resp.ConsumerAuthenticationInfo.AuthenticationTransactionId
-	}
+	csTransactionID := ""
 
 	newStatus := string(domain.RemittanceFailed)
+	collectionStatus := ""
 	switch domainResp.Status {
-	case domain.CSStatusAuthorized:
+	case domain.CSStatusAuthorized, domain.CSStatusAAccepted:
 		newStatus = string(domain.RemittanceCollected)
+		csTransactionID = resp.ProcessorInformation.TransactionId
+		collectionStatus = "AUTHORIZED"
 	case domain.CSStatusAuthorizedPendingReview:
 		newStatus = string(domain.RemittanceReviewPending)
+		collectionStatus = "AUTHORIZED_PENDING_REVIEW"
 	case domain.CSStatusPendingAuth:
 		newStatus = string(domain.RemittanceCollectionPending)
+		collectionStatus = "PENDING_AUTHENTICATION"
+	default:
+		newStatus = string(domain.RemittanceFailed)
+		collectionStatus = "DECLINED"
 	}
 
 	_, err = s.db.UpdateRemittance(context.Background(), database.UpdateRemittanceParams{
-		CsTransactionID:               sql.NullString{String: resp.ID, Valid: resp.ID != ""},
-		CsAuthenticationTransactionID: sql.NullString{String: authID, Valid: authID != ""},
-		CollectionStatus:              sql.NullString{String: newStatus, Valid: true},
+		CsTransactionID:               sql.NullString{String: csTransactionID, Valid: csTransactionID != ""},
+		CsAuthenticationTransactionID: sql.NullString{String: req.AuthenticationTransactionId, Valid: req.AuthenticationTransactionId != ""},
+		CollectionStatus:              sql.NullString{String: collectionStatus, Valid: collectionStatus != ""},
 		Status:                        newStatus,
 		SenderCardID: func() sql.NullString {
 			if savedCardID != nil {

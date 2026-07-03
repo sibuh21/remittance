@@ -945,11 +945,11 @@ func (q *Queries) SaveSenderCard(ctx context.Context, arg SaveSenderCardParams) 
 
 const updateRemittance = `-- name: UpdateRemittance :one
 UPDATE remittances 
-SET cs_transaction_id = $1, 
-	cs_authentication_transaction_id = $2, 
-	collection_status = $3, 
+SET cs_transaction_id = COALESCE($1, cs_transaction_id), 
+	cs_authentication_transaction_id = COALESCE($2, cs_authentication_transaction_id), 
+	collection_status = COALESCE($3, collection_status), 
 	status = $4,
-	sender_card_id = $5,
+	sender_card_id = COALESCE($5, sender_card_id),
 	updated_at = now()
 WHERE id = $6
 	AND deleted_at IS NULL
