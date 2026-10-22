@@ -166,6 +166,7 @@ func (c *RESTClient) doPost(path string, payload any) ([]byte, error) {
 	}
 
 	resp, err := c.httpClient.Do(req)
+	fmt.Printf("status code: %d path:%s", resp.StatusCode, path)
 	if err != nil {
 		return nil, fmt.Errorf("cybersource: request failed: %w", err)
 	}

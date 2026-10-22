@@ -89,7 +89,8 @@ func (s *collectionService) SetupPASetup(req *domain.PASetupRequest) (*domain.PA
 			TransientTokenJWT: req.TransientTokenJWT,
 		}
 	}
-
+	marshal, _ := json.Marshal(paReq)
+	fmt.Println("paReq in cybersource setup", string(marshal))
 	resp, err := s.csRESTClient.PASetup(paReq)
 	if err != nil {
 		return nil, fmt.Errorf("PA Setup failed: %w", err)
@@ -137,22 +138,22 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 	var deviceInfo *cybersource.DeviceInfo
 	if req.BrowserInfo != nil {
 		deviceInfo = &cybersource.DeviceInfo{
-			FingerprintSessionId: req.FingerprintID,
-			IPAddress: func() string {
-				if req.IPAddress == "::1" || req.IPAddress == "127.0.0.1" {
-					return "8.8.8.8" // Use a public IP for testing if localhost
-				}
-				return req.IPAddress
-			}(),
-			UserAgentBrowserValue:        req.BrowserInfo.UserAgentBrowserValue,
-			HttpBrowserColorDepth:        req.BrowserInfo.HttpBrowserColorDepth,
-			HttpBrowserScreenWidth:       req.BrowserInfo.HttpBrowserScreenWidth,
-			HttpBrowserScreenHeight:      req.BrowserInfo.HttpBrowserScreenHeight,
-			HttpBrowserLanguage:          req.BrowserInfo.HttpBrowserLanguage,
-			HttpBrowserTimeDifference:    req.BrowserInfo.HttpBrowserTimeDifference,
-			HttpAcceptBrowserValue:       req.BrowserInfo.HttpAcceptBrowserValue,
-			HttpBrowserJavaEnabled:       req.BrowserInfo.HttpBrowserJavaEnabled,
-			HttpBrowserJavaScriptEnabled: req.BrowserInfo.HttpBrowserJavaScriptEnabled,
+			// FingerprintSessionId: req.FingerprintID,
+			// IPAddress: func() string {
+			// 	if req.IPAddress == "::1" || req.IPAddress == "127.0.0.1" {
+			// 		return "8.8.8.8" // Use a public IP for testing if localhost
+			// 	}
+			// 	return req.IPAddress
+			// }(),
+			// UserAgentBrowserValue:        req.BrowserInfo.UserAgentBrowserValue,
+			// HttpBrowserColorDepth:        req.BrowserInfo.HttpBrowserColorDepth,
+			// HttpBrowserScreenWidth:       req.BrowserInfo.HttpBrowserScreenWidth,
+			// HttpBrowserScreenHeight:      req.BrowserInfo.HttpBrowserScreenHeight,
+			// HttpBrowserLanguage:          req.BrowserInfo.HttpBrowserLanguage,
+			// HttpBrowserTimeDifference:    req.BrowserInfo.HttpBrowserTimeDifference,
+			// HttpAcceptBrowserValue:       req.BrowserInfo.HttpAcceptBrowserValue,
+			// HttpBrowserJavaEnabled:       req.BrowserInfo.HttpBrowserJavaEnabled,
+			// HttpBrowserJavaScriptEnabled: req.BrowserInfo.HttpBrowserJavaScriptEnabled,
 		}
 	} else {
 		deviceInfo = &cybersource.DeviceInfo{
@@ -215,27 +216,27 @@ func (s *collectionService) AuthorizePayment(req *domain.AuthorizeRequest) (*dom
 			AuthenticationTransactionId: req.AuthenticationTransactionId,
 		},
 		SenderInformation: &cybersource.SenderInfo{
-			FirstName:          user.FirstName,
-			LastName:           user.LastName,
-			Address1:           rem.SenderAddress,
-			Locality:           rem.SenderCity,
-			AdministrativeArea: s.validatedState(rem.SenderCountry, rem.SenderState),
-			PostalCode:         rem.SenderPostalCode,
-			CountryCode: func() string {
-				alpha2, _ := domain.GetCountryCodes(rem.SenderCountry)
-				return alpha2
-			}(),
+			// FirstName:          user.FirstName,
+			// LastName:           user.LastName,
+			// Address1:           rem.SenderAddress,
+			// Locality:           rem.SenderCity,
+			// AdministrativeArea: s.validatedState(rem.SenderCountry, rem.SenderState),
+			// PostalCode:         rem.SenderPostalCode,
+			// CountryCode: func() string {
+			// 	alpha2, _ := domain.GetCountryCodes(rem.SenderCountry)
+			// 	return alpha2
+			// }(),
 		},
 		RecipientInformation: &cybersource.RecipientInfo{
-			FirstName: strings.TrimSpace(rem.ReceiverFirstName),
-			LastName:  strings.TrimSpace(rem.ReceiverLastName),
-			Address1:  strings.TrimSpace(rem.ReceiverAddress),
-			Locality:  strings.TrimSpace(rem.ReceiverCity),
-			Country: func() string {
-				alpha2, _ := domain.GetCountryCodes(rem.ReceiverCountry)
-				return alpha2
-			}(),
-			PostalCode: rem.ReceiverPostalCode, // Default for ETH if missing
+			// FirstName: strings.TrimSpace(rem.ReceiverFirstName),
+			// LastName:  strings.TrimSpace(rem.ReceiverLastName),
+			// Address1:  strings.TrimSpace(rem.ReceiverAddress),
+			// Locality:  strings.TrimSpace(rem.ReceiverCity),
+			// Country: func() string {
+			// 	alpha2, _ := domain.GetCountryCodes(rem.ReceiverCountry)
+			// 	return alpha2
+			// }(),
+			// PostalCode: rem.ReceiverPostalCode, // Default for ETH if missing
 		},
 	}
 

@@ -59,17 +59,14 @@ type OrderInfo struct {
 }
 
 type BillTo struct {
-	FirstName          string `json:"firstName"`
-	LastName           string `json:"lastName"`
-	Email              string `json:"email"`
-	Address1           string `json:"address1"`
-	Locality           string `json:"locality"`
-	AdministrativeArea string `json:"administrativeArea"`
-	Country            string `json:"country"`
-	PostalCode         string `json:"postalCode"`
-	PhoneNumber        string `json:"phoneNumber,omitempty"`
-	District           string `json:"district,omitempty"`
-	BuildingName       string `json:"buildingNumber,omitempty"`
+	FirstName          string `json:"firstName,omitempty"`
+	LastName           string `json:"lastName,omitempty"`
+	Email              string `json:"email,omitempty"`
+	Address1           string `json:"address1,omitempty"`
+	Locality           string `json:"locality,omitempty"`
+	AdministrativeArea string `json:"administrativeArea,omitempty"`
+	Country            string `json:"country,omitempty"`
+	PostalCode         string `json:"postalCode,omitempty"`
 }
 
 type AmountDetails struct {
